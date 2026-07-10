@@ -1,0 +1,43 @@
+{
+  "name": "firas-apps",
+  "version": "1.0.0",
+  "description": "Firas AI packaged apps — desktop (.exe), Android (.apk), iOS (.ipa)",
+  "main": "desktop/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win",
+    "cap:sync": "cap sync"
+  },
+  "build": {
+    "appId": "com.firas.ai",
+    "productName": "Firas AI",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "desktop/**/*",
+      "www/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false
+    }
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "@capacitor/core": "^6.2.0",
+    "@capacitor/cli": "^6.2.0",
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/ios": "^6.2.0"
+  }
+}

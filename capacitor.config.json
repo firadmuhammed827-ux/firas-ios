@@ -1,0 +1,23 @@
+{
+  "appId": "com.firas.ai",
+  "appName": "Firas AI",
+  "webDir": "www",
+  "plugins": {},
+  "android": {
+    "allowMixedContent": false
+  },
+  "ios": {
+    "contentInset": "always"
+  },
+  "server": {
+    "url": "https://firasai.netlify.app",
+    "cleartext": false,
+    "allowNavigation": [
+      "firasai.netlify.app",
+      "*.firebaseapp.com",
+      "accounts.google.com",
+      "*.googleapis.com",
+      "*.gstatic.com"
+    ]
+  }
+}
