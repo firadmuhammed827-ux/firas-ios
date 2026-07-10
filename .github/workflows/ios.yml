@@ -20,13 +20,9 @@ jobs:
       # Capacitor.Plugins.FirebaseAuthentication was undefined on the device (403 fell through).
       - name: Capacitor sync iOS (regenerate packageClassList + native deps)
         run: npx cap sync ios
-      # cap sync rewrites the Podfile's capacitor_pods block and DROPS our Google subspec, so
-      # re-apply it before pod install or the GoogleSignIn SDK won't be linked.
-      - name: Re-apply the Google subspec that cap sync strips
-        working-directory: ios/App
-        run: |
-          sed -i '' "s#pod 'CapacitorFirebaseAuthentication', :path => '../../node_modules/@capacitor-firebase/authentication'#pod 'CapacitorFirebaseAuthentication', :path => '../../node_modules/@capacitor-firebase/authentication', :subspecs => ['Google']#" Podfile
-          grep -n "CapacitorFirebaseAuthentication" Podfile
+      # We deliberately use the plugin's DEFAULT subspec (cap sync produces the plain pod line) and
+      # add GoogleSignIn + the RGCFA_INCLUDE_GOOGLE flag via the committed Podfile's post_install —
+      # the 'Google' subspec was what made CocoaPods drop the plugin from the app link line.
       - name: Pod install
         working-directory: ios/App
         run: pod install --repo-update

@@ -1,10 +1,7 @@
 require_relative '../../node_modules/@capacitor/ios/scripts/pods_helpers'
 
 platform :ios, '13.0'
-# Static linkage is the documented setup for Firebase + Capacitor: Firebase/GoogleSignIn ship as
-# static frameworks, and mixing them with dynamic use_frameworks! left the CapacitorFirebaseAuthentication
-# plugin's own code unlinked (its @objc class never reached the binary → the plugin didn't register).
-use_frameworks! :linkage => :static
+use_frameworks!
 
 # workaround to avoid Xcode caching of Pods that requires
 # Product -> Clean Build Folder after new Cordova plugins installed
@@ -14,7 +11,7 @@ install! 'cocoapods', :disable_input_output_paths => true
 def capacitor_pods
   pod 'Capacitor', :path => '../../node_modules/@capacitor/ios'
   pod 'CapacitorCordova', :path => '../../node_modules/@capacitor/ios'
-  pod 'CapacitorFirebaseAuthentication', :path => '../../node_modules/@capacitor-firebase/authentication', :subspecs => ['Google']
+  pod 'CapacitorFirebaseAuthentication', :path => '../../node_modules/@capacitor-firebase/authentication'
   pod 'CapacitorHaptics', :path => '../../node_modules/@capacitor/haptics'
   pod 'CapacitorKeyboard', :path => '../../node_modules/@capacitor/keyboard'
   pod 'CapacitorSplashScreen', :path => '../../node_modules/@capacitor/splash-screen'
@@ -23,9 +20,21 @@ end
 
 target 'App' do
   capacitor_pods
-  # Add your Pods here
+  # The plugin's Google support lives behind #if RGCFA_INCLUDE_GOOGLE. Using the plugin's 'Google'
+  # subspec made CocoaPods drop the plugin from the app's link line entirely, so we instead pull the
+  # Google SDK here and inject the compile flag in post_install (see below) with the DEFAULT subspec.
+  pod 'GoogleSignIn', '~> 7.1'
 end
 
 post_install do |installer|
   assertDeploymentTarget(installer)
+  installer.pods_project.targets.each do |target|
+    if target.name == 'CapacitorFirebaseAuthentication'
+      target.build_configurations.each do |config|
+        flags = config.build_settings['OTHER_SWIFT_FLAGS'] || '$(inherited)'
+        flags = [flags] unless flags.is_a?(Array)
+        config.build_settings['OTHER_SWIFT_FLAGS'] = (flags + ['-D', 'RGCFA_INCLUDE_GOOGLE'])
+      end
+    end
+  end
 end
