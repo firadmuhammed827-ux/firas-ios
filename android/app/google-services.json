@@ -15,6 +15,14 @@
       },
       "oauth_client": [
         {
+          "client_id": "237562309958-ti85ubr5rob3aa0oprha0apk1nt7b00j.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.firas.ai",
+            "certificate_hash": "d034c8e303f57831e3beda3e608cb42c4e2ab0bf"
+          }
+        },
+        {
           "client_id": "237562309958-shkej86aoj09i9mchl1ulq4nnp7u1rf3.apps.googleusercontent.com",
           "client_type": 3
         }
@@ -30,6 +38,13 @@
             {
               "client_id": "237562309958-shkej86aoj09i9mchl1ulq4nnp7u1rf3.apps.googleusercontent.com",
               "client_type": 3
+            },
+            {
+              "client_id": "237562309958-p0njbmb5imqcfd6fk728ccr6lhesq03e.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.firas.ai"
+              }
             }
           ]
         }
