@@ -1,37 +1,37 @@
-name: Build iOS unsigned IPA
+name: Build unsigned iOS IPA
 on:
   push:
   workflow_dispatch:
 jobs:
-  build-ios:
-    runs-on: macos-14
+  build-ios-unsigned:
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Install deps
+      - name: Install JS deps
         run: npm ci || npm install
-      - name: Sync Capacitor iOS
+      - name: Capacitor sync iOS (copies static www + pod install)
         run: npx cap sync ios
-      - name: Install CocoaPods
-        run: cd ios/App && pod install
-      - name: Archive (UNSIGNED — no Apple account needed)
+      - name: Archive (unsigned — no Apple account needed)
+        working-directory: ios/App
         run: |
-          cd ios/App
-          xcodebuild -workspace App.xcworkspace -scheme App \
-            -configuration Release -sdk iphoneos \
-            -archivePath "$PWD/build/App.xcarchive" archive \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM=""
-      - name: Package unsigned .ipa
+          xcodebuild \
+            -workspace App.xcworkspace -scheme App \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" clean archive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" CODE_SIGN_ENTITLEMENTS="" AD_HOC_CODE_SIGNING_ALLOWED=YES
+      - name: Package .app into unsigned .ipa
         run: |
-          cd ios/App/build
-          mkdir -p Payload
-          cp -R App.xcarchive/Products/Applications/App.app Payload/App.app
-          zip -qr "Firas AI (unsigned).ipa" Payload
-          ls -lh "Firas AI (unsigned).ipa"
+          APP=$(ls -d "$RUNNER_TEMP/App.xcarchive/Products/Applications/"*.app | head -n1)
+          mkdir -p "$RUNNER_TEMP/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/Payload/"
+          ( cd "$RUNNER_TEMP" && zip -qr "Firas AI (unsigned).ipa" Payload )
+          ls -lh "$RUNNER_TEMP/Firas AI (unsigned).ipa"
       - uses: actions/upload-artifact@v4
         with:
           name: Firas-AI-iphone-ipa
-          path: ios/App/build/Firas AI (unsigned).ipa
+          path: ${{ runner.temp }}/Firas AI (unsigned).ipa
           if-no-files-found: error
