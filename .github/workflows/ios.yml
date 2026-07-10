@@ -2,6 +2,9 @@ name: Build unsigned iOS IPA
 on:
   push:
   workflow_dispatch:
+permissions:
+  contents: write
+
 jobs:
   build-ios-unsigned:
     runs-on: macos-15
@@ -35,3 +38,9 @@ jobs:
           name: Firas-AI-iphone-ipa
           path: ${{ runner.temp }}/Firas AI (unsigned).ipa
           if-no-files-found: error
+      - name: Publish public release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ipa-${{ github.run_number }}
+          name: Firas AI iPhone unsigned ${{ github.run_number }}
+          files: ${{ runner.temp }}/Firas AI (unsigned).ipa
