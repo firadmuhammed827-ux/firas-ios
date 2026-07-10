@@ -23,6 +23,15 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- Google OAuth redirect (reversed-client-id custom scheme) so @capacitor/app
+                 catches the Custom Tabs return in the system-browser sign-in flow. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.googleusercontent.apps.237562309958-p0njbmb5imqcfd6fk728ccr6lhesq03e" />
+            </intent-filter>
+
         </activity>
 
         <provider

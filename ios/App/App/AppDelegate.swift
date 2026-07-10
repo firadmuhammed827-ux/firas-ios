@@ -1,8 +1,5 @@
 import UIKit
 import Capacitor
-#if canImport(CapacitorFirebaseAuthentication)
-import CapacitorFirebaseAuthentication
-#endif
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -10,13 +7,6 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Force the linker to KEEP the plugin class. Capacitor resolves plugins by string via
-        // NSClassFromString("FirebaseAuthenticationPlugin") at runtime, so nothing references the
-        // class by symbol — the optimizer then dead-strips it out of the binary and the plugin never
-        // registers (Capacitor.Plugins.FirebaseAuthentication is undefined). Referencing .self keeps it.
-        #if canImport(CapacitorFirebaseAuthentication)
-        _ = FirebaseAuthenticationPlugin.self
-        #endif
         return true
     }
 

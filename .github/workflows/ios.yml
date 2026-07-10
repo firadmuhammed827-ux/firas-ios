@@ -15,34 +15,11 @@ jobs:
           node-version: '20'
       - name: Install JS deps
         run: npm ci || npm install
-      # cap sync (NOT cap copy) regenerates a COMPLETE packageClassList — cap copy shipped a
-      # partial one missing FirebaseAuthenticationPlugin, so the plugin never registered and
-      # Capacitor.Plugins.FirebaseAuthentication was undefined on the device (403 fell through).
-      - name: Capacitor sync iOS (regenerate packageClassList + native deps)
+      - name: Capacitor sync iOS
         run: npx cap sync ios
-      # cap sync rewrites capacitor_pods and drops the Google subspec — re-apply it so the plugin
-      # compiles its Google code + pulls GoogleSignIn. (The subspec makes CocoaPods omit the plugin
-      # from the app link line, which we compensate for with -force_load in the app build settings.)
-      - name: Re-apply the Google subspec that cap sync strips
-        working-directory: ios/App
-        run: |
-          sed -i '' "s#pod 'CapacitorFirebaseAuthentication', :path => '../../node_modules/@capacitor-firebase/authentication'#pod 'CapacitorFirebaseAuthentication', :path => '../../node_modules/@capacitor-firebase/authentication', :subspecs => ['Google']#" Podfile
-          grep -n "CapacitorFirebaseAuthentication" Podfile
       - name: Pod install
         working-directory: ios/App
         run: pod install --repo-update
-      - name: Diagnose Firebase plugin linkage (informational)
-        working-directory: ios/App
-        run: |
-          echo "== Pods-App OTHER_LDFLAGS (is CapacitorFirebaseAuthentication linked?) =="
-          grep -h "OTHER_LDFLAGS" "Pods/Target Support Files/Pods-App/"*.xcconfig || echo "(none)"
-          echo "== CapacitorFirebaseAuthentication in Pods =="
-          ls -la "Pods/Target Support Files/CapacitorFirebaseAuthentication/" 2>/dev/null || echo "(no support-files dir)"
-          find Pods -maxdepth 2 -iname "*FirebaseAuthentication*" 2>/dev/null || true
-      # FAIL LOUDLY if the Cap-6 packageClassList regression ever recurs, instead of shipping a broken IPA.
-      - name: Guard — assert FirebaseAuthentication is registered
-        run: |
-          node -e "const c=require('./ios/App/App/capacitor.config.json');const l=c.packageClassList||[];if(!l.includes('FirebaseAuthenticationPlugin')){console.error('BUG: packageClassList missing FirebaseAuthenticationPlugin ->',l);process.exit(1)}console.log('OK packageClassList:',l)"
       - name: Archive (unsigned — no Apple account needed)
         working-directory: ios/App
         run: |
@@ -52,26 +29,6 @@ jobs:
             -archivePath "$RUNNER_TEMP/App.xcarchive" clean archive \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" CODE_SIGN_ENTITLEMENTS="" AD_HOC_CODE_SIGNING_ALLOWED=YES
-      # Informational only (never blocks the IPA): report whether the plugin symbol/framework is present,
-      # plus the link line, so we can diagnose from the log. The on-device test is the real judge.
-      - name: Report plugin linkage into the release body
-        run: |
-          APP=$(ls -d "$RUNNER_TEMP/App.xcarchive/Products/Applications/"*.app | head -n1)
-          RPT="$RUNNER_TEMP/linkage.txt"
-          {
-            echo "### linkage diagnostic (run ${{ github.run_number }})"
-            echo '```'
-            echo "-- Frameworks embedded --"
-            ls -1 "$APP/Frameworks/" 2>/dev/null || echo "(none)"
-            echo "-- Pods-App OTHER_LDFLAGS (is the plugin -framework here?) --"
-            grep -h "OTHER_LDFLAGS" "ios/App/Pods/Target Support Files/Pods-App/"*.xcconfig 2>/dev/null | tr ' ' '\n' | grep -i "firebase\|OTHER_LDFLAGS\|ObjC" || echo "(none)"
-            echo "-- app binary: any nm symbol (all) matching FirebaseAuthentication --"
-            nm "$APP/App" 2>/dev/null | grep -i FirebaseAuthenticationPlugin | head -5 || echo "(none)"
-            echo "-- app binary: -gU external match --"
-            nm -gU "$APP/App" 2>/dev/null | grep -i FirebaseAuthentication | head -5 || echo "(none)"
-            echo '```'
-          } > "$RPT"
-          cat "$RPT"
       - name: Package .app into unsigned .ipa
         run: |
           APP=$(ls -d "$RUNNER_TEMP/App.xcarchive/Products/Applications/"*.app | head -n1)
@@ -89,5 +46,4 @@ jobs:
         with:
           tag_name: ipa-${{ github.run_number }}
           name: Firas AI iPhone unsigned ${{ github.run_number }}
-          body_path: ${{ runner.temp }}/linkage.txt
           files: ${{ runner.temp }}/Firas AI (unsigned).ipa
