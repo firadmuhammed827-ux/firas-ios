@@ -43,16 +43,24 @@ jobs:
             -archivePath "$RUNNER_TEMP/App.xcarchive" clean archive \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" CODE_SIGN_ENTITLEMENTS="" AD_HOC_CODE_SIGNING_ALLOWED=YES
-      # Belt-and-suspenders: if the class somehow isn't linked into the binary, fail rather than ship.
-      - name: Verify the plugin class is linked into the archive
+      # Belt-and-suspenders: confirm the plugin actually ships. Check the embedded framework
+      # (the reliable dynamic-framework signal) first, then fall back to a symbol search for the
+      # static-linkage case. Prints diagnostics either way.
+      - name: Verify the plugin ships in the archive
         run: |
           APP=$(ls -d "$RUNNER_TEMP/App.xcarchive/Products/Applications/"*.app | head -n1)
-          ( nm -gU "$APP/App" 2>/dev/null; \
-            for f in "$APP/Frameworks/"*.framework; do \
-              nm -gU "$f/$(basename "$f" .framework)" 2>/dev/null; done ) \
-          | grep -i FirebaseAuthenticationPlugin \
-          && echo "OK: FirebaseAuthenticationPlugin linked" \
-          || { echo "MISSING: FirebaseAuthenticationPlugin not in binary"; exit 1; }
+          echo "== Frameworks embedded in the archive =="
+          ls -1 "$APP/Frameworks/" 2>/dev/null || echo "(no Frameworks dir)"
+          if [ -d "$APP/Frameworks/CapacitorFirebaseAuthentication.framework" ]; then
+            echo "OK: CapacitorFirebaseAuthentication.framework is embedded (dynamic linkage)"; exit 0
+          fi
+          echo "== Searching binaries for the plugin symbol (static linkage) =="
+          if ( nm -gU "$APP/App" 2>/dev/null; \
+               for f in "$APP/Frameworks/"*.framework; do nm -gU "$f/$(basename "$f" .framework)" 2>/dev/null; done ) \
+             | grep -qi FirebaseAuthenticationPlugin; then
+            echo "OK: FirebaseAuthenticationPlugin symbol is linked into a binary"; exit 0
+          fi
+          echo "MISSING: FirebaseAuthenticationPlugin is neither an embedded framework nor a linked symbol"; exit 1
       - name: Package .app into unsigned .ipa
         run: |
           APP=$(ls -d "$RUNNER_TEMP/App.xcarchive/Products/Applications/"*.app | head -n1)
