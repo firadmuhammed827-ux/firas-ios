@@ -1,7 +1,10 @@
 require_relative '../../node_modules/@capacitor/ios/scripts/pods_helpers'
 
 platform :ios, '13.0'
-use_frameworks!
+# Static linkage is the documented setup for Firebase + Capacitor: Firebase/GoogleSignIn ship as
+# static frameworks, and mixing them with dynamic use_frameworks! left the CapacitorFirebaseAuthentication
+# plugin's own code unlinked (its @objc class never reached the binary → the plugin didn't register).
+use_frameworks! :linkage => :static
 
 # workaround to avoid Xcode caching of Pods that requires
 # Product -> Clean Build Folder after new Cordova plugins installed

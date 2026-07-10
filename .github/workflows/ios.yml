@@ -30,6 +30,14 @@ jobs:
       - name: Pod install
         working-directory: ios/App
         run: pod install --repo-update
+      - name: Diagnose Firebase plugin linkage (informational)
+        working-directory: ios/App
+        run: |
+          echo "== Pods-App OTHER_LDFLAGS (is CapacitorFirebaseAuthentication linked?) =="
+          grep -h "OTHER_LDFLAGS" "Pods/Target Support Files/Pods-App/"*.xcconfig || echo "(none)"
+          echo "== CapacitorFirebaseAuthentication in Pods =="
+          ls -la "Pods/Target Support Files/CapacitorFirebaseAuthentication/" 2>/dev/null || echo "(no support-files dir)"
+          find Pods -maxdepth 2 -iname "*FirebaseAuthentication*" 2>/dev/null || true
       # FAIL LOUDLY if the Cap-6 packageClassList regression ever recurs, instead of shipping a broken IPA.
       - name: Guard — assert FirebaseAuthentication is registered
         run: |
