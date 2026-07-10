@@ -11,7 +11,7 @@ install! 'cocoapods', :disable_input_output_paths => true
 def capacitor_pods
   pod 'Capacitor', :path => '../../node_modules/@capacitor/ios'
   pod 'CapacitorCordova', :path => '../../node_modules/@capacitor/ios'
-  pod 'CapacitorFirebaseAuthentication', :path => '../../node_modules/@capacitor-firebase/authentication'
+  pod 'CapacitorFirebaseAuthentication', :path => '../../node_modules/@capacitor-firebase/authentication', :subspecs => ['Google']
   pod 'CapacitorHaptics', :path => '../../node_modules/@capacitor/haptics'
   pod 'CapacitorKeyboard', :path => '../../node_modules/@capacitor/keyboard'
   pod 'CapacitorSplashScreen', :path => '../../node_modules/@capacitor/splash-screen'
@@ -20,21 +20,9 @@ end
 
 target 'App' do
   capacitor_pods
-  # The plugin's Google support lives behind #if RGCFA_INCLUDE_GOOGLE. Using the plugin's 'Google'
-  # subspec made CocoaPods drop the plugin from the app's link line entirely, so we instead pull the
-  # Google SDK here and inject the compile flag in post_install (see below) with the DEFAULT subspec.
-  pod 'GoogleSignIn', '~> 7.1'
+  # Add your Pods here
 end
 
 post_install do |installer|
   assertDeploymentTarget(installer)
-  installer.pods_project.targets.each do |target|
-    if target.name == 'CapacitorFirebaseAuthentication'
-      target.build_configurations.each do |config|
-        flags = config.build_settings['OTHER_SWIFT_FLAGS'] || '$(inherited)'
-        flags = [flags] unless flags.is_a?(Array)
-        config.build_settings['OTHER_SWIFT_FLAGS'] = (flags + ['-D', 'RGCFA_INCLUDE_GOOGLE'])
-      end
-    end
-  end
 end
