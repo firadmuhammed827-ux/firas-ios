@@ -359,6 +359,8 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
+					"-framework",
+					CapacitorFirebaseAuthentication,
 				);
 				MARKETING_VERSION = 1.0;
 				OTHER_SWIFT_FLAGS = "$(inherited) \"-D\" \"COCOAPODS\" \"-DDEBUG\"";
@@ -383,6 +385,8 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
+					"-framework",
+					CapacitorFirebaseAuthentication,
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.firas.ai;
