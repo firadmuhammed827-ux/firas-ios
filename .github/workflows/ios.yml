@@ -15,11 +15,25 @@ jobs:
           node-version: '20'
       - name: Install JS deps
         run: npm ci || npm install
-      - name: Capacitor copy iOS (web assets + config only; leaves the Podfile intact)
-        run: npx cap copy ios
-      - name: Pod install (uses the committed Podfile with the Google subspec)
+      # cap sync (NOT cap copy) regenerates a COMPLETE packageClassList — cap copy shipped a
+      # partial one missing FirebaseAuthenticationPlugin, so the plugin never registered and
+      # Capacitor.Plugins.FirebaseAuthentication was undefined on the device (403 fell through).
+      - name: Capacitor sync iOS (regenerate packageClassList + native deps)
+        run: npx cap sync ios
+      # cap sync rewrites the Podfile's capacitor_pods block and DROPS our Google subspec, so
+      # re-apply it before pod install or the GoogleSignIn SDK won't be linked.
+      - name: Re-apply the Google subspec that cap sync strips
+        working-directory: ios/App
+        run: |
+          sed -i '' "s#pod 'CapacitorFirebaseAuthentication', :path => '../../node_modules/@capacitor-firebase/authentication'#pod 'CapacitorFirebaseAuthentication', :path => '../../node_modules/@capacitor-firebase/authentication', :subspecs => ['Google']#" Podfile
+          grep -n "CapacitorFirebaseAuthentication" Podfile
+      - name: Pod install
         working-directory: ios/App
         run: pod install --repo-update
+      # FAIL LOUDLY if the Cap-6 packageClassList regression ever recurs, instead of shipping a broken IPA.
+      - name: Guard — assert FirebaseAuthentication is registered
+        run: |
+          node -e "const c=require('./ios/App/App/capacitor.config.json');const l=c.packageClassList||[];if(!l.includes('FirebaseAuthenticationPlugin')){console.error('BUG: packageClassList missing FirebaseAuthenticationPlugin ->',l);process.exit(1)}console.log('OK packageClassList:',l)"
       - name: Archive (unsigned — no Apple account needed)
         working-directory: ios/App
         run: |
@@ -29,6 +43,16 @@ jobs:
             -archivePath "$RUNNER_TEMP/App.xcarchive" clean archive \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" CODE_SIGN_ENTITLEMENTS="" AD_HOC_CODE_SIGNING_ALLOWED=YES
+      # Belt-and-suspenders: if the class somehow isn't linked into the binary, fail rather than ship.
+      - name: Verify the plugin class is linked into the archive
+        run: |
+          APP=$(ls -d "$RUNNER_TEMP/App.xcarchive/Products/Applications/"*.app | head -n1)
+          ( nm -gU "$APP/App" 2>/dev/null; \
+            for f in "$APP/Frameworks/"*.framework; do \
+              nm -gU "$f/$(basename "$f" .framework)" 2>/dev/null; done ) \
+          | grep -i FirebaseAuthenticationPlugin \
+          && echo "OK: FirebaseAuthenticationPlugin linked" \
+          || { echo "MISSING: FirebaseAuthenticationPlugin not in binary"; exit 1; }
       - name: Package .app into unsigned .ipa
         run: |
           APP=$(ls -d "$RUNNER_TEMP/App.xcarchive/Products/Applications/"*.app | head -n1)
