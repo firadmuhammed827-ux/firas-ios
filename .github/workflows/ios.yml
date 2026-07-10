@@ -53,19 +53,24 @@ jobs:
             CODE_SIGN_IDENTITY="" CODE_SIGN_ENTITLEMENTS="" AD_HOC_CODE_SIGNING_ALLOWED=YES
       # Informational only (never blocks the IPA): report whether the plugin symbol/framework is present,
       # plus the link line, so we can diagnose from the log. The on-device test is the real judge.
-      - name: Report plugin linkage (non-blocking)
+      - name: Report plugin linkage into the release body
         run: |
           APP=$(ls -d "$RUNNER_TEMP/App.xcarchive/Products/Applications/"*.app | head -n1)
-          echo "== Frameworks embedded =="; ls -1 "$APP/Frameworks/" 2>/dev/null || echo "(none)"
-          echo "== Pods-App OTHER_LDFLAGS =="; grep -h "OTHER_LDFLAGS" "ios/App/Pods/Target Support Files/Pods-App/"*.xcconfig || echo "(none)"
-          echo "== App binary: FirebaseAuthentication symbols =="
-          nm -gU "$APP/App" 2>/dev/null | grep -i FirebaseAuthentication || echo "(none in app binary)"
-          if [ -d "$APP/Frameworks/CapacitorFirebaseAuthentication.framework" ] \
-             || nm -gU "$APP/App" 2>/dev/null | grep -qi FirebaseAuthenticationPlugin; then
-            echo "RESULT: plugin appears LINKED"
-          else
-            echo "RESULT: plugin NOT detected by this probe (device test will confirm)"
-          fi
+          RPT="$RUNNER_TEMP/linkage.txt"
+          {
+            echo "### linkage diagnostic (run ${{ github.run_number }})"
+            echo '```'
+            echo "-- Frameworks embedded --"
+            ls -1 "$APP/Frameworks/" 2>/dev/null || echo "(none)"
+            echo "-- Pods-App OTHER_LDFLAGS (is the plugin -framework here?) --"
+            grep -h "OTHER_LDFLAGS" "ios/App/Pods/Target Support Files/Pods-App/"*.xcconfig 2>/dev/null | tr ' ' '\n' | grep -i "firebase\|OTHER_LDFLAGS\|ObjC" || echo "(none)"
+            echo "-- app binary: any nm symbol (all) matching FirebaseAuthentication --"
+            nm "$APP/App" 2>/dev/null | grep -i FirebaseAuthenticationPlugin | head -5 || echo "(none)"
+            echo "-- app binary: -gU external match --"
+            nm -gU "$APP/App" 2>/dev/null | grep -i FirebaseAuthentication | head -5 || echo "(none)"
+            echo '```'
+          } > "$RPT"
+          cat "$RPT"
       - name: Package .app into unsigned .ipa
         run: |
           APP=$(ls -d "$RUNNER_TEMP/App.xcarchive/Products/Applications/"*.app | head -n1)
@@ -83,4 +88,5 @@ jobs:
         with:
           tag_name: ipa-${{ github.run_number }}
           name: Firas AI iPhone unsigned ${{ github.run_number }}
+          body_path: ${{ runner.temp }}/linkage.txt
           files: ${{ runner.temp }}/Firas AI (unsigned).ipa
