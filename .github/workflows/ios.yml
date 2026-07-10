@@ -15,8 +15,11 @@ jobs:
           node-version: '20'
       - name: Install JS deps
         run: npm ci || npm install
-      - name: Capacitor sync iOS (copies static www + pod install)
-        run: npx cap sync ios
+      - name: Capacitor copy iOS (web assets + config only; leaves the Podfile intact)
+        run: npx cap copy ios
+      - name: Pod install (uses the committed Podfile with the Google subspec)
+        working-directory: ios/App
+        run: pod install --repo-update
       - name: Archive (unsigned — no Apple account needed)
         working-directory: ios/App
         run: |

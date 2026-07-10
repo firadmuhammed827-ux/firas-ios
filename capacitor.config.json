@@ -2,12 +2,33 @@
   "appId": "com.firas.ai",
   "appName": "Firas AI",
   "webDir": "www",
-  "plugins": {},
+  "plugins": {
+    "Keyboard": {
+      "resize": "none"
+    },
+    "SplashScreen": {
+      "launchAutoHide": true,
+      "launchShowDuration": 3000,
+      "fadeOutDuration": 200,
+      "backgroundColor": "#1a1a18",
+      "showSpinner": false,
+      "androidScaleType": "CENTER_CROP",
+      "splashFullScreen": true,
+      "splashImmersive": false
+    },
+    "FirebaseAuthentication": {
+      "skipNativeAuth": false,
+      "providers": ["google.com"]
+    }
+  },
   "android": {
-    "allowMixedContent": false
+    "allowMixedContent": false,
+    "backgroundColor": "#1a1a18"
   },
   "ios": {
-    "contentInset": "always"
+    "contentInset": "never",
+    "backgroundColor": "#1a1a18",
+    "scrollEnabled": true
   },
   "server": {
     "url": "https://firasai.netlify.app",
@@ -19,5 +40,6 @@
       "*.googleapis.com",
       "*.gstatic.com"
     ]
-  }
+  },
+  "backgroundColor": "#1a1a18"
 }

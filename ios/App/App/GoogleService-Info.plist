@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CLIENT_ID</key>
+	<string>237562309958-p0njbmb5imqcfd6fk728ccr6lhesq03e.apps.googleusercontent.com</string>
+	<key>REVERSED_CLIENT_ID</key>
+	<string>com.googleusercontent.apps.237562309958-p0njbmb5imqcfd6fk728ccr6lhesq03e</string>
+	<key>ANDROID_CLIENT_ID</key>
+	<string>237562309958-ti85ubr5rob3aa0oprha0apk1nt7b00j.apps.googleusercontent.com</string>
+	<key>API_KEY</key>
+	<string>AIzaSyB6YL9t5nChDYoFoA8XUjIajwLklz5M1Fw</string>
+	<key>GCM_SENDER_ID</key>
+	<string>237562309958</string>
+	<key>PLIST_VERSION</key>
+	<string>1</string>
+	<key>BUNDLE_ID</key>
+	<string>com.firas.ai</string>
+	<key>PROJECT_ID</key>
+	<string>firas-ai</string>
+	<key>STORAGE_BUCKET</key>
+	<string>firas-ai.firebasestorage.app</string>
+	<key>IS_ADS_ENABLED</key>
+	<false></false>
+	<key>IS_ANALYTICS_ENABLED</key>
+	<false></false>
+	<key>IS_APPINVITE_ENABLED</key>
+	<true></true>
+	<key>IS_GCM_ENABLED</key>
+	<true></true>
+	<key>IS_SIGNIN_ENABLED</key>
+	<true></true>
+	<key>GOOGLE_APP_ID</key>
+	<string>1:237562309958:ios:e9fcce59ddc17b07e3c947</string>
+	<key>DATABASE_URL</key>
+	<string>https://firas-ai-default-rtdb.firebaseio.com</string>
+</dict>
+</plist>

@@ -1,0 +1,40 @@
+{
+  "project_info": {
+    "project_number": "237562309958",
+    "firebase_url": "https://firas-ai-default-rtdb.firebaseio.com",
+    "project_id": "firas-ai",
+    "storage_bucket": "firas-ai.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:237562309958:android:c41c45b66b4ac951e3c947",
+        "android_client_info": {
+          "package_name": "com.firas.ai"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "237562309958-shkej86aoj09i9mchl1ulq4nnp7u1rf3.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCYdCVAeCS-YL0ao1JfSo3KxcJfMFbu1Tk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "237562309958-shkej86aoj09i9mchl1ulq4nnp7u1rf3.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
