@@ -27,6 +27,15 @@ enum ChatRenderingTests {
         expect(math[0].0 == "x^2" && math[0].1, "inline formula remains inline")
         expect(math[1].0 == "\\int_0^1 x dx" && !math[1].1, "display formula remains display")
 
+        let multiline = try ChatTextParser.segments(from: "مقدمة 😀 $$a +\nb = c$$ خاتمة")
+        expect(multiline.count == 3, "display formula spans line separators without dropping surrounding text")
+        if case .math(let expression, let inline) = multiline[1].kind {
+            expect(expression == "a +\nb = c" && !inline, "multiline display content and presentation remain intact")
+            expect(multiline[1].id == ("مقدمة 😀 " as NSString).length, "multiline formula offset uses UTF16 after an emoji")
+        } else {
+            preconditionFailure("multiline display text must remain a formula")
+        }
+
         let unfinished = try ChatTextParser.segments(from: "نص $غير مكتمل")
         expect(unfinished.count == 1, "unfinished streamed delimiter remains visible text")
         if case .markdown(let text, _) = unfinished[0].kind {

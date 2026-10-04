@@ -48,7 +48,8 @@ nonisolated enum ChatTextParser {
     // This is the existing native scanner, moved unchanged and compiled once.
     // Keep recognition changes aligned with the website's scanMathSpans contract.
     private static let mathRegex = try? NSRegularExpression(
-        pattern: #"(\$\$([\s\S]*?)\$\$|\$([^\n$]+)\$)"#
+        pattern: #"(\$\$([\s\S]*?)\$\$|\$([^\n$]+)\$)"#,
+        options: [.dotMatchesLineSeparators]
     )
 
     static func segments(from text: String) throws -> [ChatTextSegment] {
@@ -61,7 +62,7 @@ nonisolated enum ChatTextParser {
         let source = text as NSString
         let matches = mathRegex?.matches(
             in: text,
-            options: [.dotMatchesLineSeparators],
+            options: [],
             range: NSRange(location: 0, length: source.length)
         ) ?? []
         var cursor = 0
