@@ -69,6 +69,23 @@ nonisolated private struct TransportFixtureBody: Encodable, Sendable { let text:
         func expect(_ condition: Bool, _ label: String) {
             precondition(condition, label); checks += 1
         }
+        func safeFixtureError(_ error: APIError) -> String {
+            // Synthetic case identity and allowlisted codes only: no error
+            // body, localized description, headers or credential values.
+            switch error {
+            case .invalidURL: return "invalidURL"
+            case .invalidRequest(let code):
+                let safeCodes = ["media_asset_too_large", "media_session_required",
+                    "media_session_changed", "media_history_too_large"]
+                return "invalidRequest." + (safeCodes.contains(code) ? code : "other")
+            case .transport(let code, _): return "transport." + String(code)
+            case .invalidResponse: return "invalidResponse"
+            case .httpStatus(let code, _): return "httpStatus." + String(code)
+            case .skillValidation: return "skillValidation"
+            case .encoding: return "encoding"
+            case .decoding: return "decoding"
+            }
+        }
         expect(credentials.origin == origin && credentials.cookieHeader.contains(cookieName + "=owner-a"),
                "captures the actual synthetic owner cookie at this loopback origin")
         func controlURL(_ path: String, query: [URLQueryItem] = []) -> URL {
@@ -161,18 +178,19 @@ nonisolated private struct TransportFixtureBody: Encodable, Sendable { let text:
                 try remove(unexpected)
                 preconditionFailure("rejected fixture unexpectedly returned an asset: " + name)
             } catch let error as APIError {
+                let context = " [fixture=" + name + "; error=" + safeFixtureError(error) + "]"
                 switch name {
                 case "declared_cap", "stream_cap", "encoded_response":
-                    expect(error == .invalidRequest("media_asset_too_large"), "actual delegate rejects declared/received/encoded byte policy")
+                    expect(error == .invalidRequest("media_asset_too_large"), "actual delegate rejects declared/received/encoded byte policy" + context)
                 case "same_origin_redirect", "foreign_origin_redirect":
-                    expect(error == .httpStatus(code: 302, message: "media_asset_unavailable"), "both same and foreign origin redirects are rejected before a hop")
+                    expect(error == .httpStatus(code: 302, message: "media_asset_unavailable"), "both same and foreign origin redirects are rejected before a hop" + context)
                 case "unauthorized":
-                    expect(error == .httpStatus(code: 401, message: "media_asset_unavailable"), "HTTP failure exposes a fixed code, not upstream response content")
+                    expect(error == .httpStatus(code: 401, message: "media_asset_unavailable"), "HTTP failure exposes a fixed code, not upstream response content" + context)
                 case "truncated":
                     if case .transport = error { checks += 1 }
-                    else { expect(error == .invalidResponse, "truncated declared body cannot return a successful asset") }
+                    else { expect(error == .invalidResponse, "truncated declared body cannot return a successful asset" + context) }
                 default:
-                    expect(error == .invalidResponse, "declared MIME/random bytes cannot pass actual signature screening")
+                    expect(error == .invalidResponse, "declared MIME/random bytes cannot pass actual signature screening" + context)
                 }
             }
             expect(try parts() == before, "failed download removes its exact partial file before returning")
