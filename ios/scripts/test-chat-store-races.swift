@@ -461,7 +461,17 @@ import Foundation
             try await waitUntil { api.pendingStarts.count == 1 }
             expect(api.classificationCount == 1, "prefetched conversational decision is classified only once")
             expect(api.starts.last?.skillIds == [skill.id], "selected pins reach the actual durable job")
-            expect(api.starts.last?.messages.first?.content == classified.conversationInstruction, "unknown decision keeps the truthful conversational instruction")
+            let expectedInstruction = classified.conversationInstruction
+            let expectedDifficulty = DifficultyPolicy.decision(text: "Explain how to generate an image", currentLevel: 5)
+            expect(!expectedDifficulty.ask && expectedDifficulty.calibration == DifficultyCalibration(level: 5),
+                   "this ordinary explanation retains default level five without a chooser")
+            let expectedRule = DifficultyPolicy.rule(DifficultyCalibration(level: 5))
+            let submittedSystem = api.starts.last!.messages.first!
+            expect(submittedSystem.role == .system &&
+                   String(submittedSystem.content.prefix(expectedInstruction.count)) == expectedInstruction,
+                   "unknown decision keeps the exact truthful conversational instruction first")
+            expect(String(submittedSystem.content.dropFirst(expectedInstruction.count)) == expectedRule,
+                   "ordinary non-chooser request appends the exact complete source-derived level five rule once")
             api.failStart(APIError.httpStatus(400, nil))
             try await waitUntil { !store.isSending }
             expect(store.lastAcceptedSend == nil && selection.ids == [skill.id], "failed enqueue does not clear pins")

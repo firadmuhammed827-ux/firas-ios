@@ -32,7 +32,7 @@ private nonisolated final class CloudRedirectDelegate: NSObject, URLSessionTaskD
 }
 
 extension CloudEndpointPolicy {
-    static func session(configuration: URLSessionConfiguration, origin: URL) -> URLSession {
+    nonisolated static func session(configuration: URLSessionConfiguration, origin: URL) -> URLSession {
         URLSession(configuration: configuration, delegate: CloudRedirectDelegate(origin: origin), delegateQueue: nil)
     }
 }

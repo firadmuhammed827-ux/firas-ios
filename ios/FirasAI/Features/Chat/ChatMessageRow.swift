@@ -385,7 +385,7 @@ private struct ChatFormattedText: View {
         let segments: [ChatTextSegment]
     }
 
-    private struct Style {
+    struct Style {
         let font: Font
         let color: Color
 
