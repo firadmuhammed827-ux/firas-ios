@@ -29,25 +29,48 @@ mac_sdk="$(xcrun --sdk macosx --show-sdk-path)"
 mac_target="$(uname -m)-apple-macosx14.0"
 printf '%s\n' "Validation artifacts: $validation_dir"
 
+fixture_failures=()
+fixture_failure_count=0
 run_policy_test() {
     local test_name="$1"
     shift
+    local -a compile_exit_codes runtime_exit_codes program_args=()
     printf '\n%s\n' "Checking $test_name"
-    xcrun --sdk macosx swiftc \
+    if xcrun --sdk macosx swiftc \
         -sdk "$mac_sdk" \
         -target "$mac_target" \
         -swift-version 6 \
         -strict-concurrency=complete \
         -parse-as-library \
         "$@" \
-        -o "$validation_dir/$test_name" 2>&1 | tee "$validation_dir/$test_name-build.log"
-    if [[ "$test_name" == "media-transport" ]]; then
-        "$validation_dir/$test_name" "$validation_dir/media-fixture-port.txt" | tee "$validation_dir/$test_name.log"
-    elif [[ "$test_name" == "difficulty-policy" ]]; then
-        "$validation_dir/$test_name" "$repo_dir/tools/fixtures/native-difficulty-contract.json" | tee "$validation_dir/$test_name.log"
+        -o "$validation_dir/$test_name" 2>&1 | tee "$validation_dir/$test_name-build.log"; then
+        compile_exit_codes=("${PIPESTATUS[@]}")
     else
-        "$validation_dir/$test_name" | tee "$validation_dir/$test_name.log"
+        compile_exit_codes=("${PIPESTATUS[@]}")
     fi
+    printf 'compile_exit=%s\ncompile_log_exit=%s\n' "${compile_exit_codes[0]}" "${compile_exit_codes[1]}" >"$validation_dir/$test_name-status.log"
+    if (( compile_exit_codes[0] != 0 || compile_exit_codes[1] != 0 )); then
+        printf '%s\n' 'runtime=skipped_compile_failure' >>"$validation_dir/$test_name-status.log"
+        fixture_failures+=("$test_name: compile exit=${compile_exit_codes[0]}, log exit=${compile_exit_codes[1]}; runtime skipped")
+        fixture_failure_count=$((fixture_failure_count + 1))
+        return 0
+    fi
+    if [[ "$test_name" == "media-transport" ]]; then
+        program_args=("$validation_dir/media-fixture-port.txt")
+    elif [[ "$test_name" == "difficulty-policy" ]]; then
+        program_args=("$repo_dir/tools/fixtures/native-difficulty-contract.json")
+    fi
+    if "$validation_dir/$test_name" ${program_args[@]+"${program_args[@]}"} 2>&1 | tee "$validation_dir/$test_name.log"; then
+        runtime_exit_codes=("${PIPESTATUS[@]}")
+    else
+        runtime_exit_codes=("${PIPESTATUS[@]}")
+    fi
+    printf 'runtime_exit=%s\nruntime_log_exit=%s\n' "${runtime_exit_codes[0]}" "${runtime_exit_codes[1]}" >>"$validation_dir/$test_name-status.log"
+    if (( runtime_exit_codes[0] != 0 || runtime_exit_codes[1] != 0 )); then
+        fixture_failures+=("$test_name: runtime exit=${runtime_exit_codes[0]}, log exit=${runtime_exit_codes[1]}")
+        fixture_failure_count=$((fixture_failure_count + 1))
+    fi
+    return 0
 }
 
 run_policy_test client-policy \
@@ -213,6 +236,14 @@ run_policy_test media-transport \
     "$script_dir/model-generation-test-fixtures.swift" \
     "$script_dir/test-media-transport.swift"
 stop_media_fixture
+
+# Every standalone fixture is required. Report all failures after the owned
+# loopback child is stopped; no app build or archive may follow a failed suite.
+if (( fixture_failure_count > 0 )); then
+    printf '\n%s\n' 'FAIL: required standalone fixtures failed; app builds are blocked.' >&2
+    printf '%s\n' "${fixture_failures[@]}" | tee "$validation_dir/fixture-failures.log" >&2
+    exit 1
+fi
 
 # A generic simulator destination checks every app source without depending on
 # a particular device name or requiring provisioning credentials. This builds

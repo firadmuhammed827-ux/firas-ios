@@ -179,6 +179,10 @@ final class PromptEngineerStore {
     /// Explicit application uses the current revision captured by the tap.
     @discardableResult
     func apply(snapshot: ChatDraftSnapshot<DraftContextSelection>) -> Bool {
+        // Reject the queued tap before adopting or restoring a newer identity.
+        // A retired tap must not reveal a restored pointer in that epoch.
+        guard !session.isWorking, snapshot.ownerID == session.identityID,
+              snapshot.identityGeneration == session.identityGeneration else { return false }
         synchronizeOwner()
         guard canApply, snapshot.ownerID == ownerID, snapshot.identityGeneration == identityGeneration else { return false }
         let applied = chatStore.replaceDraft(with: text, matching: snapshot)
