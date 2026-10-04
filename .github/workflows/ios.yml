@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 45
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
-      FIRAS_NATIVE_QA_ROOT: ${{ runner.temp }}/firas-native-ios-${{ github.run_id }}-${{ github.run_attempt }}
+      FIRAS_NATIVE_QA_ROOT: /tmp/firas-native-ios-${{ github.run_id }}-${{ github.run_attempt }}
     defaults:
       run:
         shell: bash
