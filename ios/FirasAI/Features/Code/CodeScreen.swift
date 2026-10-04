@@ -711,8 +711,9 @@ private struct CodePreviewView: UIViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate {
         var lastHTML = ""
 
+        @MainActor
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
-                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+                     decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
             let scheme = navigationAction.request.url?.scheme?.lowercased()
             // Preview HTML and ordinary web navigation only; no file URLs, app deep links, or native bridge.
             decisionHandler(["about", "http", "https", "data", "blob"].contains(scheme ?? "") ? .allow : .cancel)

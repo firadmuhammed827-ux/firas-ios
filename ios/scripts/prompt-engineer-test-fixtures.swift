@@ -19,24 +19,24 @@ import Foundation
     var stopWaiters: [CheckedContinuation<Bool, Error>] = []
     var scopes: [String] = []
 
-    func mediaCredentialSnapshot() async throws -> MediaCredentialSnapshot {
+    @MainActor func mediaCredentialSnapshot() async throws -> MediaCredentialSnapshot {
         if let credentialFailure { throw credentialFailure }
         if holdCredentials { return try await withCheckedThrowingContinuation { credentials.append($0) } }
         return snapshot()
     }
-    func startPromptEngineer(_ request: PromptEngineerJobRequest) async throws -> PromptEngineerStart {
+    @MainActor func startPromptEngineer(_ request: PromptEngineerJobRequest) async throws -> PromptEngineerStart {
         recordScope(); starts.append(request)
         return try await withCheckedThrowingContinuation { startWaiters.append($0) }
     }
-    func promptEngineerReceipt(cid: String) async throws -> PromptEngineerReceipt {
+    @MainActor func promptEngineerReceipt(cid: String) async throws -> PromptEngineerReceipt {
         recordScope(); receiptCalls.append(cid)
         return try await withCheckedThrowingContinuation { receiptWaiters.append($0) }
     }
-    func promptEngineerStatus(id: String) async throws -> PromptEngineerStatus {
+    @MainActor func promptEngineerStatus(id: String) async throws -> PromptEngineerStatus {
         recordScope(); statusCalls.append(id)
         return try await withCheckedThrowingContinuation { statusWaiters.append($0) }
     }
-    func stopPromptEngineer(id: String) async throws -> Bool {
+    @MainActor func stopPromptEngineer(id: String) async throws -> Bool {
         recordScope(); stopCalls.append(id)
         if let stopFailure { throw stopFailure }
         if holdStops { return try await withCheckedThrowingContinuation { stopWaiters.append($0) } }
