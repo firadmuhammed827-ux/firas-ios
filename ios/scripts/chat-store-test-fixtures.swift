@@ -11,12 +11,18 @@ nonisolated struct MediaCredentialSnapshot: Equatable, Sendable {
 nonisolated enum MediaCredentialScope {
     @TaskLocal static var current: MediaCredentialSnapshot?
 }
-nonisolated enum APIError: Error, LocalizedError {
+nonisolated enum APIError: Error, Equatable, LocalizedError, Sendable {
     case transport(code: Int, message: String)
     case httpStatus(Int, String?)
     case invalidURL, invalidRequest(String), invalidResponse, encoding, decoding
     case skillValidation([String])
     var errorDescription: String? { "Test transport failure" }
+
+    var statusCode: Int? {
+        if case .skillValidation = self { return 400 }
+        guard case .httpStatus(let code, _) = self else { return nil }
+        return code
+    }
 }
 
 @MainActor final class SessionStore {

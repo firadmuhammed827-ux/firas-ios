@@ -58,3 +58,39 @@ jobs:
           path: ${{ env.FIRAS_NATIVE_QA_ROOT }}/artifacts/
           if-no-files-found: error
           retention-days: 14
+
+  native-ios-compile:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/codex/native-agent-free'
+    runs-on: macos-26
+    timeout-minutes: 25
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      FIRAS_NATIVE_QA_ROOT: /tmp/firas-native-compile-${{ github.run_id }}-${{ github.run_attempt }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out the selected native review branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Verify macOS 26 and Xcode 26.6 toolchain
+        run: bash .github/scripts/native-ios-artifact.sh toolchain
+
+      - name: Compile the complete native Debug Simulator app
+        run: bash .github/scripts/native-ios-artifact.sh compile
+
+      - name: Collect compile diagnostics
+        if: always()
+        run: bash .github/scripts/native-ios-artifact.sh collect
+
+      - name: Upload native compile diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: native-ios-compile-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.FIRAS_NATIVE_QA_ROOT }}/diagnostics/
+          if-no-files-found: warn
+          retention-days: 14
+          include-hidden-files: true

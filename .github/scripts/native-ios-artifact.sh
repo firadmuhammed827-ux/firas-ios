@@ -32,6 +32,22 @@ case "${1:-}" in
         export FIRAS_IOS_VALIDATION_DIR="$qa_root/validation"
         bash "$repo_dir/ios/scripts/validate-xcode.sh" 2>&1 | tee "$qa_root/validate-xcode.log"
         ;;
+    compile)
+        xcodebuild \
+            -project "$repo_dir/ios/FirasAI.xcodeproj" \
+            -scheme FirasAI \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$qa_root/DerivedData" \
+            -clonedSourcePackagesDirPath "$qa_root/SourcePackages" \
+            -resultBundlePath "$qa_root/DebugCompile.xcresult" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            'CODE_SIGN_IDENTITY=' \
+            'DEVELOPMENT_TEAM=' \
+            build 2>&1 | tee "$qa_root/debug-compile.log"
+        ;;
     archive)
         archive_path="$qa_root/FirasAI-unsigned.xcarchive"
         xcodebuild \
@@ -102,7 +118,7 @@ for directory, names, files in os.walk(root):
 PY
         ;;
     *)
-        printf '%s\n' 'Usage: native-ios-artifact.sh toolchain|validate|archive|collect' >&2
+        printf '%s\n' 'Usage: native-ios-artifact.sh toolchain|validate|compile|archive|collect' >&2
         exit 2
         ;;
 esac
