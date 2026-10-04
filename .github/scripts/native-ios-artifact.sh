@@ -48,6 +48,78 @@ case "${1:-}" in
             'DEVELOPMENT_TEAM=' \
             build 2>&1 | tee "$qa_root/debug-compile.log"
         ;;
+    media-diagnostic)
+        # Independent visibility only. The primary nineteen-suite/archive gate
+        # remains authoritative; this mode never builds or packages an app.
+        ios_dir="$repo_dir/ios"
+        fixture_dir="$ios_dir/scripts"
+        validation_dir="$qa_root/media-diagnostic"
+        mkdir -p -- "$validation_dir"
+        mac_sdk="$(xcrun --sdk macosx --show-sdk-path)"
+        mac_target="$(uname -m)-apple-macosx14.0"
+        fixture_pid=""
+        stop_diagnostic_fixture() {
+            if [[ -n "$fixture_pid" ]]; then
+                kill "$fixture_pid" 2>/dev/null || true
+                wait "$fixture_pid" 2>/dev/null || true
+                fixture_pid=""
+            fi
+        }
+        trap stop_diagnostic_fixture EXIT
+        trap 'exit 129' HUP
+        trap 'exit 130' INT
+        trap 'exit 143' TERM
+        printf 'suite=media-transport\npurpose=parallel_diagnostic_only\n' >"$validation_dir/media-transport-status.log"
+        command -v python3 >/dev/null || { printf '%s\n' 'Python 3 is required for synthetic loopback media.' >&2; exit 2; }
+        [[ ! -e "$validation_dir/media-fixture-port.txt" ]] || { printf '%s\n' 'A fresh diagnostic port file is required.' >&2; exit 2; }
+        python3 "$fixture_dir/media-transport-fixtures.py" \
+            --port-file "$validation_dir/media-fixture-port.txt" \
+            >"$validation_dir/media-fixture.log" 2>&1 &
+        fixture_pid="$!"
+        for ((attempt = 0; attempt < 300; attempt++)); do
+            [[ -s "$validation_dir/media-fixture-port.txt" ]] && break
+            kill -0 "$fixture_pid" 2>/dev/null || break
+            sleep 0.1
+        done
+        if [[ ! -s "$validation_dir/media-fixture-port.txt" ]]; then
+            printf 'fixture_startup=failed\nruntime=skipped_fixture_startup\n' >>"$validation_dir/media-transport-status.log"
+            printf '%s\n' 'Synthetic fixture did not publish its owned port within thirty seconds.' >&2
+            exit 2
+        fi
+        printf 'fixture_startup=ready\n' >>"$validation_dir/media-transport-status.log"
+        if xcrun --sdk macosx swiftc \
+            -sdk "$mac_sdk" \
+            -target "$mac_target" \
+            -swift-version 6 \
+            -strict-concurrency=complete \
+            -parse-as-library \
+            "$ios_dir/FirasAI/Models/CommonModels.swift" \
+            "$ios_dir/FirasAI/Models/MediaStudioModels.swift" \
+            "$ios_dir/FirasAI/Networking/CloudEndpointPolicy.swift" \
+            "$ios_dir/FirasAI/Networking/APIClient.swift" \
+            "$fixture_dir/model-generation-test-fixtures.swift" \
+            "$fixture_dir/test-media-transport.swift" \
+            -o "$validation_dir/media-transport" 2>&1 | tee "$validation_dir/media-transport-build.log"; then
+            compile_exit_codes=("${PIPESTATUS[@]}")
+        else
+            compile_exit_codes=("${PIPESTATUS[@]}")
+        fi
+        printf 'compile_exit=%s\ncompile_log_exit=%s\n' "${compile_exit_codes[0]}" "${compile_exit_codes[1]}" >>"$validation_dir/media-transport-status.log"
+        if (( compile_exit_codes[0] != 0 || compile_exit_codes[1] != 0 )); then
+            printf 'runtime=skipped_compile_failure\n' >>"$validation_dir/media-transport-status.log"
+            exit 1
+        fi
+        if "$validation_dir/media-transport" "$validation_dir/media-fixture-port.txt" 2>&1 | tee "$validation_dir/media-transport.log"; then
+            runtime_exit_codes=("${PIPESTATUS[@]}")
+        else
+            runtime_exit_codes=("${PIPESTATUS[@]}")
+        fi
+        printf 'runtime_exit=%s\nruntime_log_exit=%s\n' "${runtime_exit_codes[0]}" "${runtime_exit_codes[1]}" >>"$validation_dir/media-transport-status.log"
+        if (( runtime_exit_codes[0] != 0 || runtime_exit_codes[1] != 0 )); then
+            exit 1
+        fi
+        printf '%s\n' 'PASS: independent media transport diagnostic; primary validation still required.'
+        ;;
     archive)
         archive_path="$qa_root/FirasAI-unsigned.xcarchive"
         xcodebuild \
@@ -118,7 +190,7 @@ for directory, names, files in os.walk(root):
 PY
         ;;
     *)
-        printf '%s\n' 'Usage: native-ios-artifact.sh toolchain|validate|compile|archive|collect' >&2
+        printf '%s\n' 'Usage: native-ios-artifact.sh toolchain|validate|compile|media-diagnostic|archive|collect' >&2
         exit 2
         ;;
 esac

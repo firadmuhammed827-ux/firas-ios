@@ -149,9 +149,12 @@ class FixtureHandler(BaseHTTPRequestHandler):
                 target = f"http://{host}:{self.server.server_port}/fixture/redirect-target"
                 self.respond(302, length=0, headers={"Location": target})
             elif case == "declared_cap":
-                # Keep HTTP/1.1 open for the client to reject this header.
-                # Premature EOF can win as a transport error before its delegate.
+                # A bounded valid prefix permits platform response delivery.
+                # Keep HTTP/1.1 open until the client rejects the oversize header.
                 self.respond(200, length=25_000_001)
+                self.wfile.write(PNG)
+                self.wfile.write(IMAGE_CHUNK)
+                self.wfile.flush()
             elif case == "stream_cap":
                 # No Content-Length: the real delegate must enforce received bytes.
                 self.respond(200)
