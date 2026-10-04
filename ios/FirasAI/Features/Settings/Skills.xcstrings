@@ -1,0 +1,550 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "skills.title": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "My skills"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "مهاراتي"
+          }
+        }
+      }
+    },
+    "skills.detail": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skills use the same website account and apply across Firas products. Up to two always-on skills apply to each answer."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "مهاراتك مرتبطة بنفس حساب الموقع وتعمل عبر منتجات فِراس. تُطبّق مهارتان دائمتان كحد أقصى في كل إجابة."
+          }
+        }
+      }
+    },
+    "skills.create": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New skill"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "مهارة جديدة"
+          }
+        }
+      }
+    },
+    "skills.edit": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Edit skill"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تعديل المهارة"
+          }
+        }
+      }
+    },
+    "skills.enabled": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enabled"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "مفعّلة"
+          }
+        }
+      }
+    },
+    "skills.auto": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When relevant"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "عند الحاجة"
+          }
+        }
+      }
+    },
+    "skills.always": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Always"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "دائماً"
+          }
+        }
+      }
+    },
+    "skills.empty": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No skills yet"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ما عندك مهارات بعد"
+          }
+        }
+      }
+    },
+    "skills.name": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Name"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "الاسم"
+          }
+        }
+      }
+    },
+    "skills.cues": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use this when…"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "استخدمها عند…"
+          }
+        }
+      }
+    },
+    "skills.rules": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Instructions"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "التعليمات"
+          }
+        }
+      }
+    },
+    "skills.mode": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apply"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "التطبيق"
+          }
+        }
+      }
+    },
+    "skills.cuesHint": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Write 3–24 cues, one per line. Each cue must have 2–60 characters."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "اكتب ٣–٢٤ عبارة، كل عبارة بسطر وبطول ٢–٦٠ حرفاً."
+          }
+        }
+      }
+    },
+    "skills.rulesHint": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Write 4–24 instructions, one per line, each 28–300 characters. Total, including list marks, is limited to 2,600 characters."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "اكتب ٤–٢٤ تعليمة، كل تعليمة بسطر وبطول ٢٨–٣٠٠ حرف. مجموعها مع علامات القائمة لا يتجاوز ٢٦٠٠ حرف."
+          }
+        }
+      }
+    },
+    "skills.save": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "حفظ"
+          }
+        }
+      }
+    },
+    "skills.cancel": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancel"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "إلغاء"
+          }
+        }
+      }
+    },
+    "skills.delete": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete skill"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "حذف المهارة"
+          }
+        }
+      }
+    },
+    "skills.deleteHint": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This removes the skill from your website account and all Firas apps."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تُحذف هذه المهارة من حساب الموقع وجميع تطبيقات فِراس."
+          }
+        }
+      }
+    },
+    "skills.signIn": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sign in to manage your skills."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "سجّل الدخول لإدارة مهاراتك."
+          }
+        }
+      }
+    },
+    "skills.retry": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Try again"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "حاول مرة ثانية"
+          }
+        }
+      }
+    },
+    "skills.error.name": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use a name of 3–80 characters."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "اكتب اسماً بطول ٣–٨٠ حرفاً."
+          }
+        }
+      }
+    },
+    "skills.error.cues": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use 3–24 cues of 2–60 characters each."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "اكتب ٣–٢٤ عبارة، بطول ٢–٦٠ حرفاً لكل عبارة."
+          }
+        }
+      }
+    },
+    "skills.error.rules": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use 4–24 instructions of 28–300 characters each."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "اكتب ٤–٢٤ تعليمة، بطول ٢٨–٣٠٠ حرف لكل تعليمة."
+          }
+        }
+      }
+    },
+    "skills.error.total": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep all instructions within 2,600 characters, including list marks."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "خلّي مجموع التعليمات مع علامات القائمة ضمن ٢٦٠٠ حرف."
+          }
+        }
+      }
+    },
+    "skills.error.safety": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rewrite instructions that request credentials, extra permissions or overriding system instructions."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "عدّل التعليمات التي تطلب بيانات دخول أو صلاحيات إضافية أو تجاوز تعليمات النظام."
+          }
+        }
+      }
+    },
+    "skills.error.full": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your account already has 40 skills. Delete one before adding another."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "حسابك بيه ٤٠ مهارة. احذف واحدة حتى تضيف غيرها."
+          }
+        }
+      }
+    },
+    "skills.error.missing": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This skill no longer exists. Refresh the list."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "هذه المهارة لم تعد موجودة. حدّث القائمة."
+          }
+        }
+      }
+    },
+    "skills.error.unavailable": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skills could not be loaded or saved. Try again."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تعذّر تحميل المهارات أو حفظها. حاول مرة ثانية."
+          }
+        }
+      }
+    },
+    "skills.disabled": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disabled"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "متوقفة"
+          }
+        }
+      }
+    },
+    "skills.unconfirmed": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The last change has not been confirmed. Do not save it again yet."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "التغيير الأخير بعده غير مؤكد. لا تحفظه مرة ثانية هسه."
+          }
+        }
+      }
+    },
+    "skills.review": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Review saved skills"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "راجع المهارات المحفوظة"
+          }
+        }
+      }
+    },
+    "skills.reviewHint": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Once the previous request has finished, refresh and check the saved list before enabling another change. Your draft stays here."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "بعد انتهاء الطلب السابق، حدّث القائمة وتأكد من المحفوظ قبل السماح بتغيير جديد. مسودتك تبقى هنا."
+          }
+        }
+      }
+    },
+    "skills.savedList": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Current saved skills"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "المهارات المحفوظة حالياً"
+          }
+        }
+      }
+    },
+    "skills.acknowledge": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "I reviewed the list; allow changes"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "راجعت القائمة؛ اسمح بالتغيير"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

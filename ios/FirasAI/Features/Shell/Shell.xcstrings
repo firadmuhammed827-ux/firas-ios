@@ -1,0 +1,132 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "product.ai.subtitle" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "مساعدك اليومي للتعلّم والكتابة وصناعة الأفكار." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Your everyday assistant for learning, writing, and ideas." } }
+      }
+    },
+    "product.ai.title" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "فِراس AI" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Firas AI" } }
+      }
+    },
+    "product.brain.subtitle" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "ادرس ملفاتك واحصل على إجابات موثّقة بالصفحات." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Study your files with page-cited answers." } }
+      }
+    },
+    "product.brain.title" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "فِراس Brain" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Firas Brain" } }
+      }
+    },
+    "product.code.subtitle" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "ابنِ البرامج وطوّر الأكواد مع فِراس." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Build software and improve code with Firas." } }
+      }
+    },
+    "product.code.title" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "فِراس Code" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Firas Code" } }
+      }
+    },
+    "sidebar.account" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "الحساب" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Account" } }
+      }
+    },
+    "sidebar.clearSearch" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "مسح البحث" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Clear search" } }
+      }
+    },
+    "sidebar.cancelDeletion" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "إلغاء" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Cancel" } }
+      }
+    },
+    "sidebar.close" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "إغلاق الشريط الجانبي" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Close sidebar" } }
+      }
+    },
+    "sidebar.deleteChat" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "حذف المحادثة" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Delete chat" } }
+      }
+    },
+    "sidebar.deleteChatHint" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "راح تنحذف هذه المحادثة نهائياً. ما تكدر ترجعها." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "This chat will be permanently deleted. You cannot undo this." } }
+      }
+    },
+    "sidebar.dismissOverlay" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "إغلاق الشريط الجانبي" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Dismiss sidebar" } }
+      }
+    },
+    "sidebar.guest" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "ضيف" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Guest" } }
+      }
+    },
+    "sidebar.newChat" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "محادثة جديدة" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "New chat" } }
+      }
+    },
+    "sidebar.noChats" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "لا توجد محادثات بعد" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No chats yet" } }
+      }
+    },
+    "sidebar.open" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "فتح الشريط الجانبي" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Open sidebar" } }
+      }
+    },
+    "sidebar.products" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "المنتجات" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Products" } }
+      }
+    },
+    "sidebar.recent" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "الأخيرة" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Recent" } }
+      }
+    },
+    "sidebar.search" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "ابحث في المحادثات" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Search chats" } }
+      }
+    },
+    "sidebar.settings" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "الإعدادات" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Settings" } }
+      }
+    }
+  },
+  "version" : "1.0"
+}

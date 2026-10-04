@@ -1,0 +1,4 @@
+"NSCameraUsageDescription" = "يستخدم Firas AI الكاميرا فقط عندما تختار التقاط صورة جديدة وإضافتها إلى المحادثة.";
+"NSMicrophoneUsageDescription" = "يستخدم Firas AI الميكروفون للإملاء الصوتي والمكالمات الحية التي تبدأها أنت.";
+"NSPhotoLibraryAddUsageDescription" = "يحفظ Firas AI الصور والفيديوهات المُنشأة في مكتبتك فقط عندما تطلب ذلك.";
+"NSPhotoLibraryUsageDescription" = "يعرض Firas AI الصور التي تختارها لتضيفها كسياق بصري إلى المحادثة.";

@@ -1,0 +1,30 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "activity.building" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "يبني" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Building" } }
+      }
+    },
+    "activity.searching" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "يبحث" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Searching" } }
+      }
+    },
+    "activity.thinking" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "يفكّر" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Thinking" } }
+      }
+    },
+    "activity.writing" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "يكتب" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Writing" } }
+      }
+    }
+  },
+  "version" : "1.0"
+}

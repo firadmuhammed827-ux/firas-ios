@@ -1,0 +1,38 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "modelGeneration.title": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model generation"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "جيل النموذج"
+          }
+        }
+      }
+    },
+    "modelGeneration.newAnswers": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Applies to new answers. Previous answers keep their original model."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ينطبق على الإجابات الجديدة. تبقى الإجابات السابقة على نموذجها الأصلي."
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

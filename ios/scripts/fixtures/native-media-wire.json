@@ -1,0 +1,5 @@
+{
+  "image": {"prompt":"صورة","w":1024,"h":1280,"cid":"media-turn-a","chatId":"chat-a","tier":"max","lang":"ar"},
+  "video": {"prompt":"video","seconds":10,"cid":"media-turn-v","chatId":"chat-a","tier":"mini","lang":"en"},
+  "music": {"prompt":"music","lyrics":"lyrics","seconds":90,"cid":"media-turn-m","chatId":"chat-a","tier":"pro","lang":"en"}
+}

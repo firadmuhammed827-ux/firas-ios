@@ -1,0 +1,4 @@
+"NSCameraUsageDescription" = "Firas AI uses the camera only when you choose to add a new photo to your conversation.";
+"NSMicrophoneUsageDescription" = "Firas AI uses the microphone for voice dictation and live calls you start.";
+"NSPhotoLibraryAddUsageDescription" = "Firas AI saves generated images and videos to your library only when you ask it to.";
+"NSPhotoLibraryUsageDescription" = "Firas AI shows the photos you choose so you can add visual context to a conversation.";

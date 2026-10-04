@@ -1,0 +1,33 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "brain.account" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "الحساب" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Account" } } } },
+    "brain.addSources" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "إضافة مصادر" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Add sources" } } } },
+    "brain.allSources" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "كل المصادر" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "All sources" } } } },
+    "brain.ask" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "اسأل مصادرَك" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Ask your sources" } } } },
+    "brain.ask.button" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "إرسال السؤال" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Ask" } } } },
+    "brain.ask.placeholder" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "ابحث أو اسأل سؤالاً دقيقاً…" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Search or ask a precise question…" } } } },
+    "brain.cancel" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "إلغاء" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Cancel" } } } },
+    "brain.close" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "إغلاق" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Close" } } } },
+    "brain.counter.documents" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "المصادر" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Sources" } } } },
+    "brain.counter.pages" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "صفحات اليوم" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Pages today" } } } },
+    "brain.delete" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "حذف المصدر" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Delete source" } } } },
+    "brain.dismissError" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "إخفاء الخطأ" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Dismiss error" } } } },
+    "brain.hero" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "معرفتك، مرتبة وقابلة للسؤال" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Your knowledge, organized and searchable" } } } },
+    "brain.hero.detail" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "أضف ملفاتك وابحث داخلها بإجابات مرتبطة بالصفحات والمقاطع الأصلية." } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Add your files and search them with answers tied to the original pages and passages." } } } },
+    "brain.importing" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "يقرأ ويجهّز المصدر…" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Reading and preparing source…" } } } },
+    "brain.noResults" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "لا توجد نتائج مطابقة بعد." } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "No matching passages yet." } } } },
+    "brain.noSources" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "أضف أول مصدر ليصبح Brain جاهزاً للأسئلة." } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Add your first source to make Brain ready for questions." } } } },
+    "brain.officeExport" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "DOCX وPPTX وXLSX: صدّرها إلى PDF أو نص لقراءة موثوقة على iPhone." } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "DOCX, PPTX, and XLSX: export as PDF or text for reliable on-device reading." } } } },
+    "brain.openPassage" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "فتح المقطع الأصلي" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Open original passage" } } } },
+    "brain.openSidebar" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "فتح القائمة" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Open sidebar" } } } },
+    "brain.page" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "صفحة" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Page" } } } },
+    "brain.results" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "المقاطع المطابقة" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Matching passages" } } } },
+    "brain.searching" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "يبحث داخل المصادر ويطابق الصفحات" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Searching sources and matching pages" } } } },
+    "brain.signIn" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "سجّل الدخول لفتح مكتبتك" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Sign in to open your library" } } } },
+    "brain.sources" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "مكتبة المصادر" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Source library" } } } },
+    "brain.supported" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "قراءة أصلية على الجهاز" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Native on-device reading" } } } },
+    "brain.title" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "فِراس Brain" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Firas Brain" } } } }
+  },
+  "version" : "1.0"
+}

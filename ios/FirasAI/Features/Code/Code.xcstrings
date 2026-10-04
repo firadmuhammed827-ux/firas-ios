@@ -1,0 +1,32 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "code.account" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "الحساب" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Account" } } } },
+    "code.attach" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "إرفاق صورة أو ملف" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Attach image or file" } } } },
+    "code.blank" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "مشروع فارغ" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Blank project" } } } },
+    "code.build" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "ابنِ بالذكاء الاصطناعي" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Build with AI" } } } },
+    "code.buildCloud" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "يمكنك المغادرة؛ سيستمر البناء في السحابة." } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "You can leave; the build will continue in the cloud." } } } },
+    "code.building" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "يخطط للملفات ويكتبها ويربطها" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Planning, writing, and wiring files" } } } },
+    "code.cancel" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "إلغاء" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Cancel" } } } },
+    "code.delete" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "حذف المشروع" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Delete project" } } } },
+    "code.dismissError" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "إخفاء الخطأ" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Dismiss error" } } } },
+    "code.editor" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "المحرر" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Editor" } } } },
+    "code.files" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "الملفات" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Files" } } } },
+    "code.hero" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "حوّل فكرتك إلى مشروع يعمل" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Turn an idea into a working project" } } } },
+    "code.hero.detail" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "صِف ما تريد، وسيخطط فِراس للملفات ويبنيها. عدّل الكود وشاهد النتيجة مباشرة على iPhone أو iPad." } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Describe what you want and Firas will plan and build the files. Edit code and preview it directly on iPhone or iPad." } } } },
+    "code.library" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "مكتبة المشاريع" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Project library" } } } },
+    "code.noPreview" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "لا توجد صفحة HTML للمعاينة" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "No HTML page to preview" } } } },
+    "code.openSidebar" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "فتح القائمة" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Open sidebar" } } } },
+    "code.preview" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "المعاينة" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Preview" } } } },
+    "code.projectName" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "اسم المشروع" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Project name" } } } },
+    "code.projectName.placeholder" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "اسم المشروع (اختياري)" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Project name (optional)" } } } },
+    "code.prompt" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "وصف المشروع" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Project brief" } } } },
+    "code.prompt.placeholder" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "صِف الموقع أو التطبيق أو اللعبة بالتفصيل…" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Describe the site, app, or game in detail…" } } } },
+    "code.readingAttachments" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "يقرأ المرفقات على الجهاز…" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Reading attachments on device…" } } } },
+    "code.recent" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "المشاريع الأخيرة" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Recent projects" } } } },
+    "code.removeAttachment" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "إزالة المرفق" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Remove attachment" } } } },
+    "code.signIn" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "سجّل الدخول للبناء" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Sign in to build" } } } },
+    "code.title" : { "localizations" : { "ar" : { "stringUnit" : { "state" : "translated", "value" : "فِراس Code" } }, "en" : { "stringUnit" : { "state" : "translated", "value" : "Firas Code" } } } }
+  },
+  "version" : "1.0"
+}

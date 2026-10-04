@@ -1,0 +1,471 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "app.name" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "فِراس AI" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Firas AI" } }
+      }
+    },
+    "auth.back" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "رجوع" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Back" } }
+      }
+    },
+    "auth.continueGuest" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "المتابعة كضيف" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Continue as guest" } }
+      }
+    },
+    "auth.createAccount" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "إنشاء حساب" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Create account" } }
+      }
+    },
+    "auth.email" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "البريد الإلكتروني" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Email" } }
+      }
+    },
+    "auth.name" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "الاسم" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Name" } }
+      }
+    },
+    "auth.password" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "كلمة المرور" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Password" } }
+      }
+    },
+    "auth.signIn" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "تسجيل الدخول" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Sign in" } }
+      }
+    },
+    "auth.signOut" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "تسجيل الخروج" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Sign out" } }
+      }
+    },
+    "auth.subtitle" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "حساب واحد لمحادثاتك وملفاتك ومهامك." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "One account for your chats, files, and tasks." } }
+      }
+    },
+    "auth.verify.body" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "أرسلنا رابط التحقق إلى بريدك. افتحه ثم ارجع إلى التطبيق." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "We sent a verification link to your email. Open it, then return to the app." } }
+      }
+    },
+    "auth.verify.check" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "تحققت من بريدي" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "I've verified my email" } }
+      }
+    },
+    "auth.verify.title" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "تحقق من بريدك" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Check your email" } }
+      }
+    },
+    "chat.assistant" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "فِراس" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Firas" } }
+      }
+    },
+    "chat.empty.subtitle" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "اسأل، ادرس، اكتب أو ابنِ شيئاً جديداً." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Ask, study, write, or build something new." } }
+      }
+    },
+    "chat.empty.title" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "شنو ننجز اليوم؟" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "What shall we accomplish today?" } }
+      }
+    },
+    "chat.new" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "محادثة جديدة" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "New chat" } }
+      }
+    },
+    "chat.placeholder" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "اكتب رسالتك…" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Message Firas…" } }
+      }
+    },
+    "chat.processing" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "فِراس يعمل على الإجابة" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Firas is working on the answer" } }
+      }
+    },
+    "chat.reasoning" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "التفكير" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Reasoning" } }
+      }
+    },
+    "chat.send" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "إرسال" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Send" } }
+      }
+    },
+    "chat.stop" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "إيقاف" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Stop" } }
+      }
+    },
+    "chat.thinking" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "تفكير عميق" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Deep thinking" } }
+      }
+    },
+    "chat.webSearch" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "بحث الويب" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Web search" } }
+      }
+    },
+    "common.cancel" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "إلغاء" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Cancel" } }
+      }
+    },
+    "common.close" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "إغلاق" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Close" } }
+      }
+    },
+    "common.delete" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "حذف" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Delete" } }
+      }
+    },
+    "common.done" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "تم" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Done" } }
+      }
+    },
+    "common.retry" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "إعادة المحاولة" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Try again" } }
+      }
+    },
+    "language.arabic" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "العربية" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Arabic" } }
+      }
+    },
+    "language.english" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "الإنجليزية" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "English" } }
+      }
+    },
+    "nav.brain" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "فِراس Brain" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Firas Brain" } }
+      }
+    },
+    "nav.chat" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "فِراس AI" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Firas AI" } }
+      }
+    },
+    "nav.code" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "فِراس Code" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Firas Code" } }
+      }
+    },
+    "nav.recent" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "الأخيرة" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Recent" } }
+      }
+    },
+    "nav.settings" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "الإعدادات" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Settings" } }
+      }
+    },
+    "settings.account" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "الحساب" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Account" } }
+      }
+    },
+    "settings.appearance" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "المظهر" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Appearance" } }
+      }
+    },
+    "settings.chat" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "المحادثة" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Chat" } }
+      }
+    },
+    "settings.language" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "لغة الواجهة" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Interface language" } }
+      }
+    },
+    "settings.localOnly" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "هذه الخيارات محفوظة على هذا الجهاز، مثل الموقع حالياً." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "These preferences are saved on this device, matching the website today." } }
+      }
+    },
+    "settings.model" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "النموذج الافتراضي" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Default model" } }
+      }
+    },
+    "settings.motion" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "الحركة" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Motion" } }
+      }
+    },
+    "settings.readingWidth" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "عرض القراءة" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Reading width" } }
+      }
+    },
+    "settings.sendOnReturn" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "الإرسال بزر Return" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Send with Return" } }
+      }
+    },
+    "settings.textSize" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "حجم النص" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Text size" } }
+      }
+    },
+    "settings.theme" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "الثيم" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Theme" } }
+      }
+    },
+    "settings.title" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "الإعدادات" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Settings" } }
+      }
+    },
+    "auth.google" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"المتابعة باستخدام Google"}},"en":{"stringUnit":{"state":"translated","value":"Continue with Google"}}}},
+    "auth.google.error" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"تعذّر تسجيل الدخول باستخدام Google. حاول مرة أخرى."}},"en":{"stringUnit":{"state":"translated","value":"Google sign-in could not be completed. Try again."}}}},
+    "auth.google.loading" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"جارٍ فتح Google…"}},"en":{"stringUnit":{"state":"translated","value":"Opening Google…"}}}},
+    "auth.google.unavailable" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"تسجيل الدخول باستخدام Google غير مهيأ على هذا الجهاز."}},"en":{"stringUnit":{"state":"translated","value":"Google sign-in is not configured on this device."}}}},
+    "auth.or" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"أو عبر البريد الإلكتروني"}},"en":{"stringUnit":{"state":"translated","value":"or with email"}}}},
+    "auth.password.minimum" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"استخدم 8 أحرف على الأقل."}},"en":{"stringUnit":{"state":"translated","value":"Use at least 8 characters."}}}},
+    "auth.password.mismatch" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"كلمتا المرور غير متطابقتين."}},"en":{"stringUnit":{"state":"translated","value":"Passwords do not match."}}}},
+    "auth.passwordConfirm" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"تأكيد كلمة المرور"}},"en":{"stringUnit":{"state":"translated","value":"Confirm password"}}}},
+    "auth.secure" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"تسجيل دخول آمن ومزامنة محادثاتك عبر أجهزتك."}},"en":{"stringUnit":{"state":"translated","value":"Secure sign-in and synced conversations across your devices."}}}},
+    "auth.signedIn" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"تم تسجيل دخولك"}},"en":{"stringUnit":{"state":"translated","value":"You're signed in"}}}},
+    "auth.signedIn.footer" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"حسابك ومحادثاتك جاهزة."}},"en":{"stringUnit":{"state":"translated","value":"Your account and conversations are ready."}}}},
+    "settings.account.admin" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"مشرف"}},"en":{"stringUnit":{"state":"translated","value":"Admin"}}}},
+    "settings.account.changeEmail" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"تغيير البريد الإلكتروني"}},"en":{"stringUnit":{"state":"translated","value":"Change email"}}}},
+    "settings.account.changeEmail.footer" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"يتطلب كلمة المرور الحالية، ويحتاج البريد الجديد إلى التحقق."}},"en":{"stringUnit":{"state":"translated","value":"Requires your current password; the new email will need verification."}}}},
+    "settings.account.changePassword" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"تغيير كلمة المرور"}},"en":{"stringUnit":{"state":"translated","value":"Change password"}}}},
+    "settings.account.changePassword.footer" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"يتم إنهاء الجلسات الأخرى بعد التغيير حفاظاً على أمانك."}},"en":{"stringUnit":{"state":"translated","value":"Other sessions are signed out after the change for your security."}}}},
+    "settings.account.confirmPassword" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"تأكيد كلمة المرور الجديدة"}},"en":{"stringUnit":{"state":"translated","value":"Confirm new password"}}}},
+    "settings.account.currentPassword" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"كلمة المرور الحالية"}},"en":{"stringUnit":{"state":"translated","value":"Current password"}}}},
+    "settings.account.currentPassword.optional" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"كلمة المرور الحالية (اختياري لحساب Google)"}},"en":{"stringUnit":{"state":"translated","value":"Current password (optional for Google accounts)"}}}},
+    "settings.account.danger" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"منطقة حساسة"}},"en":{"stringUnit":{"state":"translated","value":"Danger zone"}}}},
+    "settings.account.danger.footer" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"هذه الإجراءات دائمة ولا يمكن التراجع عنها."}},"en":{"stringUnit":{"state":"translated","value":"These actions are permanent and cannot be undone."}}}},
+    "settings.account.daysLeft" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"الأيام المتبقية:"}},"en":{"stringUnit":{"state":"translated","value":"Days remaining:"}}}},
+    "settings.account.delete" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"حذف الحساب"}},"en":{"stringUnit":{"state":"translated","value":"Delete account"}}}},
+    "settings.account.delete.confirmMessage" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"سيُحذف الحساب وكل المحادثات وملفات Brain نهائياً."}},"en":{"stringUnit":{"state":"translated","value":"Your account, conversations, and Brain files will be permanently deleted."}}}},
+    "settings.account.delete.confirmTitle" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"متابعة حذف الحساب"}},"en":{"stringUnit":{"state":"translated","value":"Continue deleting account"}}}},
+    "settings.account.delete.final" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"هل أنت متأكد تماماً؟"}},"en":{"stringUnit":{"state":"translated","value":"Are you absolutely sure?"}}}},
+    "settings.account.delete.footer" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"حذف حسابك وكل بياناته من الخادم."}},"en":{"stringUnit":{"state":"translated","value":"Delete your account and all of its server data."}}}},
+    "settings.account.delete.passwordNote" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"حسابات Google لا تحتاج كلمة مرور للحذف. الحسابات الأخرى تتطلب كلمة المرور الحالية."}},"en":{"stringUnit":{"state":"translated","value":"Google accounts do not need a password to delete. Other accounts require the current password."}}}},
+    "settings.account.delete.warning" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"سيُحذف حسابك ومحادثاتك وملفات Brain نهائياً. لا يمكن استعادة هذه البيانات."}},"en":{"stringUnit":{"state":"translated","value":"Your account, chats, and Brain files will be permanently deleted and cannot be recovered."}}}},
+    "settings.account.guest" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"أنت تستخدم وضع الضيف"}},"en":{"stringUnit":{"state":"translated","value":"You're using guest mode"}}}},
+    "settings.account.guest.footer" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"سجّل الدخول لحفظ المحادثات ومزامنة حسابك وإدارة خطتك."}},"en":{"stringUnit":{"state":"translated","value":"Sign in to save chats, sync your account, and manage your plan."}}}},
+    "settings.account.newEmail" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"البريد الإلكتروني الجديد"}},"en":{"stringUnit":{"state":"translated","value":"New email"}}}},
+    "settings.account.newPassword" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"كلمة المرور الجديدة"}},"en":{"stringUnit":{"state":"translated","value":"New password"}}}},
+    "settings.account.plan" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"الخطة والحصص"}},"en":{"stringUnit":{"state":"translated","value":"Plan and quotas"}}}},
+    "settings.account.plan.footer" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"اسحب الشاشة إلى الأسفل لتحديث الخطة والحصص من الخادم."}},"en":{"stringUnit":{"state":"translated","value":"Pull down to refresh your plan and quotas from the server."}}}},
+    "settings.account.refreshing" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"جارٍ تحديث الحساب"}},"en":{"stringUnit":{"state":"translated","value":"Refreshing account"}}}},
+    "settings.account.saveEmail" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"حفظ البريد الجديد"}},"en":{"stringUnit":{"state":"translated","value":"Save new email"}}}},
+    "settings.account.savePassword" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"حفظ كلمة المرور"}},"en":{"stringUnit":{"state":"translated","value":"Save password"}}}},
+    "settings.account.security" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"الأمان والحساب"}},"en":{"stringUnit":{"state":"translated","value":"Security and account"}}}},
+    "settings.account.security.footer" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"تُنفذ تغييرات الحساب مباشرة عبر خادم فِراس."}},"en":{"stringUnit":{"state":"translated","value":"Account changes are applied directly through the Firas server."}}}},
+    "settings.account.signOut.footer" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"إنهاء هذه الجلسة على الجهاز."}},"en":{"stringUnit":{"state":"translated","value":"End this session on this device."}}}},
+    "settings.account.unlimited" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"غير محدود"}},"en":{"stringUnit":{"state":"translated","value":"Unlimited"}}}},
+    "settings.chat.behavior" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"سلوك المحادثة"}},"en":{"stringUnit":{"state":"translated","value":"Chat behavior"}}}},
+    "settings.data" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"البيانات"}},"en":{"stringUnit":{"state":"translated","value":"Data"}}}},
+    "settings.data.about" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"حول التطبيق"}},"en":{"stringUnit":{"state":"translated","value":"About"}}}},
+    "settings.data.backup" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"نسخة المحادثات"}},"en":{"stringUnit":{"state":"translated","value":"Chat backup"}}}},
+    "settings.data.backup.footer" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"ملف JSON متوافق مع نسخة موقع فِراس. الاستيراد ينشئ محادثات جديدة ولا يستبدل الحالية."}},"en":{"stringUnit":{"state":"translated","value":"A JSON file compatible with Firas on the web. Import creates new chats and does not replace existing ones."}}}},
+    "settings.data.backup.signIn" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"سجّل الدخول لتصدير محادثات حسابك أو استيراد نسخة احتياطية."}},"en":{"stringUnit":{"state":"translated","value":"Sign in to export your account chats or import a backup."}}}},
+    "settings.data.clear" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"إعادة ضبط تفضيلات الجهاز"}},"en":{"stringUnit":{"state":"translated","value":"Reset device preferences"}}}},
+    "settings.data.clear.confirm" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"إعادة ضبط التفضيلات"}},"en":{"stringUnit":{"state":"translated","value":"Reset preferences"}}}},
+    "settings.data.clear.confirmMessage" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"سيُعاد الثيم واللغة وخيارات المحادثة والصوت إلى الافتراضي. لن تُحذف المحادثات أو الحساب."}},"en":{"stringUnit":{"state":"translated","value":"Theme, language, chat, and voice options will return to defaults. Chats and your account will not be deleted."}}}},
+    "settings.data.clear.confirmTitle" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"إعادة ضبط إعدادات هذا الجهاز؟"}},"en":{"stringUnit":{"state":"translated","value":"Reset settings on this device?"}}}},
+    "settings.data.clear.footer" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"يمسح تفضيلات فِراس المحلية فقط، ولا يمس حسابك أو محادثاتك."}},"en":{"stringUnit":{"state":"translated","value":"Clears only local Firas preferences—not your account or chats."}}}},
+    "settings.data.device" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"بيانات هذا الجهاز"}},"en":{"stringUnit":{"state":"translated","value":"On-device data"}}}},
+    "settings.data.export" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"تصدير نسخة المحادثات"}},"en":{"stringUnit":{"state":"translated","value":"Export chat backup"}}}},
+    "settings.data.exported" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"تم حفظ نسخة المحادثات."}},"en":{"stringUnit":{"state":"translated","value":"Chat backup saved."}}}},
+    "settings.data.import" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"استيراد نسخة محادثات"}},"en":{"stringUnit":{"state":"translated","value":"Import chat backup"}}}},
+    "settings.data.import.confirm" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"استيراد المحادثات"}},"en":{"stringUnit":{"state":"translated","value":"Import chats"}}}},
+    "settings.data.import.confirmMessage" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"ستُضاف المحادثات كنسخ جديدة إلى حسابك الحالي."}},"en":{"stringUnit":{"state":"translated","value":"Chats will be added as new copies to your current account."}}}},
+    "settings.data.import.confirmTitle" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"استيراد هذه النسخة؟"}},"en":{"stringUnit":{"state":"translated","value":"Import this backup?"}}}},
+    "settings.data.imported" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"عدد المحادثات المستوردة:"}},"en":{"stringUnit":{"state":"translated","value":"Chats imported:"}}}},
+    "settings.data.invalidImport.empty" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"لا تحتوي النسخة على محادثات قابلة للاستيراد."}},"en":{"stringUnit":{"state":"translated","value":"This backup contains no chats to import."}}}},
+    "settings.data.invalidImport.format" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"هذا الملف ليس نسخة فِراس مدعومة."}},"en":{"stringUnit":{"state":"translated","value":"This file is not a supported Firas backup."}}}},
+    "settings.data.invalidImport.tooLarge" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"حجم ملف النسخة أكبر من الحد المسموح."}},"en":{"stringUnit":{"state":"translated","value":"The backup file is larger than allowed."}}}},
+    "settings.data.invalidImport.tooMany" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"تحتوي النسخة على عدد كبير جداً من المحادثات."}},"en":{"stringUnit":{"state":"translated","value":"The backup contains too many chats."}}}},
+    "settings.data.noChats" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"لا توجد محادثات لتصديرها بعد."}},"en":{"stringUnit":{"state":"translated","value":"There are no chats to export yet."}}}},
+    "settings.data.preferencesCleared" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"أُعيدت تفضيلات الجهاز إلى الإعدادات الافتراضية."}},"en":{"stringUnit":{"state":"translated","value":"Device preferences were reset to defaults."}}}},
+    "settings.data.version" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"الإصدار"}},"en":{"stringUnit":{"state":"translated","value":"Version"}}}},
+    "settings.data.whatsNew" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"ما الجديد"}},"en":{"stringUnit":{"state":"translated","value":"What's new"}}}},
+    "settings.interface" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"الواجهة"}},"en":{"stringUnit":{"state":"translated","value":"Interface"}}}},
+    "settings.model.footer" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"يُستخدم هذا النموذج افتراضياً عند بدء محادثة جديدة."}},"en":{"stringUnit":{"state":"translated","value":"This model is used by default when starting a new chat."}}}},
+    "settings.motion.full" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"كاملة"}},"en":{"stringUnit":{"state":"translated","value":"Full"}}}},
+    "settings.motion.reduced" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"مخفّضة"}},"en":{"stringUnit":{"state":"translated","value":"Reduced"}}}},
+    "settings.plan.diamond" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"Diamond"}},"en":{"stringUnit":{"state":"translated","value":"Diamond"}}}},
+    "settings.plan.free" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"مجانية"}},"en":{"stringUnit":{"state":"translated","value":"Free"}}}},
+    "settings.plan.gold" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"Gold"}},"en":{"stringUnit":{"state":"translated","value":"Gold"}}}},
+    "settings.plan.guest" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"ضيف"}},"en":{"stringUnit":{"state":"translated","value":"Guest"}}}},
+    "settings.plan.unlimited" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"غير محدودة"}},"en":{"stringUnit":{"state":"translated","value":"Unlimited"}}}},
+    "settings.quota.ai" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"المحادثات"}},"en":{"stringUnit":{"state":"translated","value":"AI chats"}}}},
+    "settings.quota.brain" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"Brain"}},"en":{"stringUnit":{"state":"translated","value":"Brain"}}}},
+    "settings.quota.code" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"Code"}},"en":{"stringUnit":{"state":"translated","value":"Code"}}}},
+    "settings.quota.remaining" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"متبقٍ"}},"en":{"stringUnit":{"state":"translated","value":"remaining"}}}},
+    "settings.reading" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"راحة القراءة"}},"en":{"stringUnit":{"state":"translated","value":"Reading comfort"}}}},
+    "settings.readingWidth.normal" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"عادي"}},"en":{"stringUnit":{"state":"translated","value":"Standard"}}}},
+    "settings.readingWidth.wide" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"واسع"}},"en":{"stringUnit":{"state":"translated","value":"Wide"}}}},
+    "settings.sendOnReturn.footer" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"يرسل Return الرسالة مباشرة؛ استخدم Shift-Return لسطر جديد."}},"en":{"stringUnit":{"state":"translated","value":"Return sends immediately; use Shift-Return for a new line."}}}},
+    "settings.sharpenImages" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"تحسين وضوح الصور"}},"en":{"stringUnit":{"state":"translated","value":"Sharpen images"}}}},
+    "settings.sharpenImages.footer" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"يحسّن الصور عند إرسالها. يبقى متوقفاً افتراضياً."}},"en":{"stringUnit":{"state":"translated","value":"Enhances images when sending. It stays off by default."}}}},
+    "settings.textSize.large" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"كبير"}},"en":{"stringUnit":{"state":"translated","value":"Large"}}}},
+    "settings.textSize.medium" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"متوسط"}},"en":{"stringUnit":{"state":"translated","value":"Medium"}}}},
+    "settings.textSize.small" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"صغير"}},"en":{"stringUnit":{"state":"translated","value":"Small"}}}},
+    "settings.theme.footer" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"ستة ثيمات من هوية فِراس؛ يطبّق اختيارك فوراً."}},"en":{"stringUnit":{"state":"translated","value":"Six Firas themes; your choice applies instantly."}}}},
+    "settings.thinking.footer" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"يمنح النموذج وقتاً إضافياً للمسائل المعقدة."}},"en":{"stringUnit":{"state":"translated","value":"Gives the model more time for complex problems."}}}},
+    "settings.voice" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"الصوت"}},"en":{"stringUnit":{"state":"translated","value":"Voice"}}}},
+    "settings.voice.call" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"صوت المكالمة"}},"en":{"stringUnit":{"state":"translated","value":"Call voice"}}}},
+    "settings.voice.call.footer" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"اختر الصوت الافتراضي للمحادثات الصوتية."}},"en":{"stringUnit":{"state":"translated","value":"Choose the default voice for voice conversations."}}}},
+    "settings.voice.call.picker" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"الصوت"}},"en":{"stringUnit":{"state":"translated","value":"Voice"}}}},
+    "settings.voice.dictation" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"لغة الإملاء"}},"en":{"stringUnit":{"state":"translated","value":"Dictation language"}}}},
+    "settings.voice.dictation.auto" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"تلقائي"}},"en":{"stringUnit":{"state":"translated","value":"Auto"}}}},
+    "settings.voice.dictation.footer" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"تساعد هذه اللغة في تحسين تعرّف الإملاء على كلامك."}},"en":{"stringUnit":{"state":"translated","value":"This language helps dictation recognize your speech."}}}},
+    "settings.webSearch.footer" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"يسمح لفِراس بالبحث في الويب عندما يحتاج معلومات حديثة."}},"en":{"stringUnit":{"state":"translated","value":"Allows Firas to search the web when current information is needed."}}}},
+    "settings.whatsNew.backup" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"نسخ محادثات قابلة للنقل"}},"en":{"stringUnit":{"state":"translated","value":"Portable chat backups"}}}},
+    "settings.whatsNew.backup.footer" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"صدّر محادثاتك واستوردها بصيغة متوافقة مع الموقع."}},"en":{"stringUnit":{"state":"translated","value":"Export and import chats in a format compatible with the website."}}}},
+    "settings.whatsNew.native" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"إعدادات SwiftUI أصلية"}},"en":{"stringUnit":{"state":"translated","value":"Native SwiftUI settings"}}}},
+    "settings.whatsNew.native.footer" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"تنقّل سريع على iPhone وواجهة جانبية متكيفة على iPad."}},"en":{"stringUnit":{"state":"translated","value":"Fast iPhone navigation and an adaptive iPad sidebar."}}}},
+    "settings.whatsNew.themes" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"هوية فِراس بستة ثيمات"}},"en":{"stringUnit":{"state":"translated","value":"Six Firas themes"}}}},
+    "settings.whatsNew.themes.footer" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"كل الأزرار والحالات تستخدم ألوان الثيم المختار."}},"en":{"stringUnit":{"state":"translated","value":"Every control and state follows your chosen theme palette."}}}},
+    "settings.whatsNew.title" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"تجربة فِراس الجديدة على iOS"}},"en":{"stringUnit":{"state":"translated","value":"The new Firas experience on iOS"}}}},
+    "settings.notifications.title" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"إشعارات المهام"}},"en":{"stringUnit":{"state":"translated","value":"Task notifications"}}}},
+    "settings.notifications.footer" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"يكمل فِراس المهام على الخادم بعد مغادرة التطبيق وينبهك بصوت فِراس عند جاهزية النتيجة."}},"en":{"stringUnit":{"state":"translated","value":"Firas keeps server jobs running after you leave and alerts you with the Firas sound when results are ready."}}}},
+    "settings.notifications.status" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"الحالة"}},"en":{"stringUnit":{"state":"translated","value":"Status"}}}},
+    "settings.notifications.status.unknown" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"لم تُحدّد بعد"}},"en":{"stringUnit":{"state":"translated","value":"Not decided yet"}}}},
+    "settings.notifications.status.denied" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"متوقفة"}},"en":{"stringUnit":{"state":"translated","value":"Off"}}}},
+    "settings.notifications.status.authorized" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"مفعّلة"}},"en":{"stringUnit":{"state":"translated","value":"Enabled"}}}},
+    "settings.notifications.enable" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"تفعيل الإشعارات"}},"en":{"stringUnit":{"state":"translated","value":"Enable notifications"}}}},
+    "settings.notifications.openSettings" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"فتح إعدادات iOS"}},"en":{"stringUnit":{"state":"translated","value":"Open iOS Settings"}}}},
+    "settings.notifications.enabled" : {"localizations":{"ar":{"stringUnit":{"state":"translated","value":"الإشعارات مفعّلة"}},"en":{"stringUnit":{"state":"translated","value":"Notifications enabled"}}}},
+    "theme.amber" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "عنبري" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Amber" } }
+      }
+    },
+    "theme.black" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "أسود" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Black" } }
+      }
+    },
+    "theme.dark" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "ليلي" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Dark" } }
+      }
+    },
+    "theme.graphite" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "كربوني" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Graphite" } }
+      }
+    },
+    "theme.light" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "نهاري" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Light" } }
+      }
+    },
+    "theme.midnight" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "نيلي" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Midnight" } }
+      }
+    },
+    "tier.max" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "Firas Max" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Firas Max" } }
+      }
+    },
+    "tier.mini" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "Firas Mini" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Firas Mini" } }
+      }
+    },
+    "tier.pro" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "Firas Pro" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Firas Pro" } }
+      }
+    },
+    "tier.ultra" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "Firas Ultra" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Firas Ultra" } }
+      }
+    }
+  },
+  "version" : "1.0"
+}

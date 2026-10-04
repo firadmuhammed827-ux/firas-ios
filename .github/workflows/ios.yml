@@ -1,49 +1,60 @@
-name: Build unsigned iOS IPA
+name: Native SwiftUI review artifacts only
+
 on:
-  push:
   workflow_dispatch:
+
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: native-ios-review-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  build-ios-unsigned:
-    runs-on: macos-15
+  native-ios-artifacts:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/codex/native-agent-free'
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      FIRAS_NATIVE_QA_ROOT: ${{ runner.temp }}/firas-native-ios-${{ github.run_id }}-${{ github.run_attempt }}
+    defaults:
+      run:
+        shell: bash
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Check out the selected native review branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          node-version: '20'
-      - name: Install JS deps
-        run: npm ci || npm install
-      - name: Capacitor sync iOS
-        run: npx cap sync ios
-      - name: Pod install
-        working-directory: ios/App
-        run: pod install --repo-update
-      - name: Archive (unsigned — no Apple account needed)
-        working-directory: ios/App
-        run: |
-          xcodebuild \
-            -workspace App.xcworkspace -scheme App \
-            -configuration Release -destination 'generic/platform=iOS' \
-            -archivePath "$RUNNER_TEMP/App.xcarchive" clean archive \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" CODE_SIGN_ENTITLEMENTS="" AD_HOC_CODE_SIGNING_ALLOWED=YES
-      - name: Package .app into unsigned .ipa
-        run: |
-          APP=$(ls -d "$RUNNER_TEMP/App.xcarchive/Products/Applications/"*.app | head -n1)
-          mkdir -p "$RUNNER_TEMP/Payload"
-          cp -R "$APP" "$RUNNER_TEMP/Payload/"
-          ( cd "$RUNNER_TEMP" && zip -qr "Firas AI (unsigned).ipa" Payload )
-          ls -lh "$RUNNER_TEMP/Firas AI (unsigned).ipa"
-      - uses: actions/upload-artifact@v4
+          persist-credentials: false
+
+      - name: Verify macOS 26 and Xcode 26.6 toolchain
+        run: bash .github/scripts/native-ios-artifact.sh toolchain
+
+      - name: Execute native fixtures and Debug plus Release Simulator builds
+        run: bash .github/scripts/native-ios-artifact.sh validate
+
+      - name: Archive unsigned native device app and package review IPA
+        run: bash .github/scripts/native-ios-artifact.sh archive
+
+      - name: Collect bounded validation diagnostics
+        if: always()
+        run: bash .github/scripts/native-ios-artifact.sh collect
+
+      - name: Upload diagnostics even when validation fails
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: Firas-AI-iphone-ipa
-          path: ${{ runner.temp }}/Firas AI (unsigned).ipa
+          name: native-ios-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.FIRAS_NATIVE_QA_ROOT }}/diagnostics/
+          if-no-files-found: warn
+          retention-days: 14
+          include-hidden-files: true
+
+      - name: Upload unsigned archive and IPA as workflow artifacts
+        if: success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: native-ios-unsigned-review-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.FIRAS_NATIVE_QA_ROOT }}/artifacts/
           if-no-files-found: error
-      - name: Publish public release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ipa-${{ github.run_number }}
-          name: Firas AI iPhone unsigned ${{ github.run_number }}
-          files: ${{ runner.temp }}/Firas AI (unsigned).ipa
+          retention-days: 14
