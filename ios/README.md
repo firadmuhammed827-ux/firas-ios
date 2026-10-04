@@ -2,7 +2,40 @@
 
 Native SwiftUI client for the Firas AI backend.
 
-## Current local difficulty checkpoint — 2026-10-04
+## Current GitHub native build checkpoint — 2026-10-04
+
+Agent remains removed from both native apps. Dark transparent glass is the default,
+and theme selection stays in Settings. Native navigation keeps the iPhone product
+order; no design gallery, glass-off toggle or extra browser toolbar is restored.
+
+[Actual GitHub Actions run 37201129910](https://github.com/firadmuhammed827-ux/firas-ios/actions/runs/37201129910), commit `eb2a4a11c8e78edf71d39b433962f31fc1a60105`, passes all **19
+standalone Swift suites** on macOS 26 with Xcode 26.6. The complete native app builds
+for generic iOS Simulator in Debug and Release, and the Release iphoneos archive
+succeeds. These are actual compiler/synthetic-fixture results; the app was not launched.
+
+The independently verified download contains an unsigned review IPA and xcarchive.
+IPA SHA-256: `1ca8c83101a442ae0ec89bfee3c10adec40807d47c04305c81fbce600a9b9762`.
+Archive ZIP SHA-256: `39b5981da0ff0bb1ee476ff97b90fa70e6c8c91ad01a13e94e4002bdc08deba4`.
+The app is `org.firasai.FirasAI`, executable `FirasAI`, arm64 for iphoneos, minimum iOS 18.
+This IPA needs Apple signing/provisioning before ordinary installation/distribution.
+It is not a student release, TestFlight upload or deployment.
+
+No iOS Simulator app interaction, iPhone execution, FPS/frame-time, launch, memory or
+accessibility measurement was performed. iOS 26 Liquid Glass and earlier iOS material
+fallbacks still need runtime checks. Windows-local Swift execution remains zero.
+Earlier source-only statements below describe historical local checkpoints, not
+the current macOS build and test execution.
+
+Android's existing difficulty QA Release is unchanged: SHA-256
+`63281f3fedb592550cece9021ab33d1dec40c120bba13ac35f2aa0f4b7311583`; its recorded 376 JVM tests/38 suites and 150 chooser cases across five
+synthetic UI configurations remain scoped to those bytes. This iOS build adds no
+Android or physical-handset performance evidence.
+
+Full Plan, remaining inline slash behavior and authenticated native/runtime parity
+remain pending. Agent APNs guards are source tested but not deployed; no background
+notification absence is claimed. This build does not complete the full product goal.
+
+## Historical local difficulty checkpoint — 2026-10-04
 
 Agent is removed from both apps; Dark transparent glass is the default and themes stay
 in Settings. The current local QA APK is
