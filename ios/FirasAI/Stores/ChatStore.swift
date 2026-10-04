@@ -703,10 +703,12 @@ final class ChatStore {
             expectedSelection &+= 1
             await new(retireDraftSubmission: false)
         }
+        // Stop retires draft consumption, so its matching CID may publish only
+        // a local stopped turn. Owner/identity/selection still fence that turn.
         guard ownsActiveOperation(ownerID: ownerID, cid: cid, identityGeneration: identityGeneration),
               selectionGeneration == expectedSelection,
-              difficultyRetirementGeneration == difficultyRetirement,
-              composerDraft.snapshot() == capturedDraft,
+              (stopRequestedCID == cid ||
+               (difficultyRetirementGeneration == difficultyRetirement && composerDraft.snapshot() == capturedDraft)),
               var conversation = selectedConversation else {
             if activeCID == cid {
                 isSending = false
@@ -716,10 +718,6 @@ final class ChatStore {
             return nil
         }
 
-        difficultyLevels.set(difficulty.level, ownerID: ownerID, conversationID: conversation.id)
-        let difficultyPreparation = ChatDifficultyPreparation(draft: capturedDraft,
-            retirementGeneration: difficultyRetirement, conversationID: conversation.id,
-            selectionGeneration: expectedSelection)
         let capturedSkillIDs = session.isAuthenticated ? Array(skillIDs.prefix(3)) : []
         sendingConversationID = conversation.id
         let assistantID = "assistant-\(cid)"
@@ -759,6 +757,17 @@ final class ChatStore {
         updateSummaryTitle(id: conversation.id, title: conversation.title)
 
         errorMessage = nil
+        if stopRequestedCID == cid {
+            // No history write, level transfer, observer or job admission is
+            // needed for a submission stopped during first-chat creation.
+            completeStopBeforeEnqueue(cid: cid)
+            return nil
+        }
+
+        difficultyLevels.set(difficulty.level, ownerID: ownerID, conversationID: conversation.id)
+        let difficultyPreparation = ChatDifficultyPreparation(draft: capturedDraft,
+            retirementGeneration: difficultyRetirement, conversationID: conversation.id,
+            selectionGeneration: expectedSelection)
 
         // The store owns the operation (not a view), and the operation retains
         // the store until it reaches a terminal server state. Navigating away
