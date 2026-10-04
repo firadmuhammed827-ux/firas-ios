@@ -67,8 +67,11 @@ import CryptoKit
             _ = store.start(snapshot: snapshot, languageCode: "ar")
             try await until { api.startWaiters.count == 1 }
             let saved = store.pointer!
-            let encodedPointers = defaults.dictionaryRepresentation().values.compactMap { $0 as? Data }
-            let pointerJSON = try JSONSerialization.jsonObject(with: encodedPointers.first!) as! [String: Any]
+            let pointerKey = "firas.ios.prompt-engineer.v1." + String(PromptEngineerPolicy.jobID(ownerID: saved.ownerID, cid: "pointer").prefix(10))
+            let encodedPointer = defaults.data(forKey: pointerKey)!
+            let persistedPointer = try JSONDecoder().decode(PromptEngineerPointer.self, from: encodedPointer)
+            expect(persistedPointer == saved, "prePOST persisted bytes belong to the exact reserved owner/CID pointer")
+            let pointerJSON = try JSONSerialization.jsonObject(with: encodedPointer) as! [String: Any]
             expect(Set(pointerJSON.keys) == Set(["ownerID", "cid", "languageCode", "startedAt", "stopRequested"]), "prePOST durable pointer contains only identity/provenance, never source/system/context/cookies")
             api.startWaiters.removeFirst().resume(throwing: APIError.transport(code: -1001, message: "synthetic timeout"))
             try await until { api.receiptWaiters.count == 1 }

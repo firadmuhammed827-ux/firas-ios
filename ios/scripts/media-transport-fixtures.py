@@ -7,7 +7,10 @@ are available through /fixture/state. The server binds 127.0.0.1 port0.
 """
 from __future__ import annotations
 
+print("synthetic_media_fixture_bootstrap", flush=True)
+
 import argparse
+import socketserver
 import base64
 import hashlib
 import gzip
@@ -39,6 +42,12 @@ KEY_CASES = {character * 64: name for character, name in [
 class FixtureServer(ThreadingHTTPServer):
     daemon_threads = True
     block_on_close = False
+
+    def server_bind(self):
+        # A loopback fixture needs no reverse DNS lookup during readiness.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name = "localhost"
+        self.server_port = self.server_address[1]
 
     def __init__(self):
         super().__init__(("127.0.0.1", 0), FixtureHandler)
@@ -207,6 +216,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--port-file", required=True)
     args = parser.parse_args()
+    print("synthetic_media_fixture_binding", flush=True)
     server = FixtureServer()
     path = Path(args.port_file).resolve()
     path.parent.mkdir(parents=True, exist_ok=True)

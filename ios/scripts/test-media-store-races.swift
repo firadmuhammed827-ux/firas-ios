@@ -120,7 +120,11 @@ import Foundation
             expect(store.creations[0].phase == .completed && store.creations[0].jobID == videoKey, "original video receipt owns the completed result")
             store.resumeIfNeeded(); await Task.yield()
             expect(api.assets.count == 1 && api.starts.count == 1, "reopen does not redownload readable completed media or create again")
-            expect(api.snapshotCount == 1 && api.capturedScopes.count >= 5, "receipt and asset keep the first operation's credential context")
+            // A lost start reply skips its success-side scope recheck: start
+            // before, receipt before/after, and asset before are four checks.
+            expect(api.snapshotCount == 1 &&
+                api.capturedScopes == Array(repeating: "synthetic-owner-a", count: 4),
+                "receipt and asset keep the first operation's credential context")
             await dispose(session, api, store)
         }
 

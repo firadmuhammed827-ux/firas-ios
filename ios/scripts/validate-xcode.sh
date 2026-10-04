@@ -219,7 +219,7 @@ python3 "$script_dir/media-transport-fixtures.py" \
     --port-file "$validation_dir/media-fixture-port.txt" \
     >"$validation_dir/media-fixture.log" 2>&1 &
 media_fixture_pid="$!"
-for ((attempt = 0; attempt < 50; attempt++)); do
+for ((attempt = 0; attempt < 300; attempt++)); do
     [[ -s "$validation_dir/media-fixture-port.txt" ]] && break
     kill -0 "$media_fixture_pid" 2>/dev/null || break
     sleep 0.1
