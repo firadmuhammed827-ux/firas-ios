@@ -1,6 +1,12 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "intro.skipHint" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "يتخطّى المقدّمة." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Skips the introduction." } }
+      }
+    },
     "product.ai.subtitle" : {
       "localizations" : {
         "ar" : { "stringUnit" : { "state" : "translated", "value" : "مساعدك اليومي للتعلّم والكتابة وصناعة الأفكار." } },
@@ -69,7 +75,7 @@
     },
     "sidebar.deleteChatHint" : {
       "localizations" : {
-        "ar" : { "stringUnit" : { "state" : "translated", "value" : "راح تنحذف هذه المحادثة نهائياً. ما تكدر ترجعها." } },
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "ستُحذف هذه المحادثة نهائياً، ولا يمكن التراجع عن ذلك." } },
         "en" : { "stringUnit" : { "state" : "translated", "value" : "This chat will be permanently deleted. You cannot undo this." } }
       }
     },
@@ -85,6 +91,12 @@
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Guest" } }
       }
     },
+    "sidebar.loading" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "جارٍ التحميل…" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Loading…" } }
+      }
+    },
     "sidebar.newChat" : {
       "localizations" : {
         "ar" : { "stringUnit" : { "state" : "translated", "value" : "محادثة جديدة" } },
@@ -95,6 +107,24 @@
       "localizations" : {
         "ar" : { "stringUnit" : { "state" : "translated", "value" : "لا توجد محادثات بعد" } },
         "en" : { "stringUnit" : { "state" : "translated", "value" : "No chats yet" } }
+      }
+    },
+    "sidebar.noMatches" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "لا توجد نتائج مطابقة للبحث" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No results match your search" } }
+      }
+    },
+    "sidebar.noProjects" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "لا توجد مشاريع بعد" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No projects yet" } }
+      }
+    },
+    "sidebar.noSources" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "لا توجد مصادر بعد" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No sources yet" } }
       }
     },
     "sidebar.open" : {
@@ -109,6 +139,12 @@
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Products" } }
       }
     },
+    "sidebar.projects" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "المشاريع" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Projects" } }
+      }
+    },
     "sidebar.recent" : {
       "localizations" : {
         "ar" : { "stringUnit" : { "state" : "translated", "value" : "الأخيرة" } },
@@ -121,10 +157,28 @@
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Search chats" } }
       }
     },
+    "sidebar.searchProjects" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "ابحث في المشاريع" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Search projects" } }
+      }
+    },
+    "sidebar.searchSources" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "ابحث في المصادر" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Search sources" } }
+      }
+    },
     "sidebar.settings" : {
       "localizations" : {
         "ar" : { "stringUnit" : { "state" : "translated", "value" : "الإعدادات" } },
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Settings" } }
+      }
+    },
+    "sidebar.sources" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "المصادر" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Sources" } }
       }
     }
   },

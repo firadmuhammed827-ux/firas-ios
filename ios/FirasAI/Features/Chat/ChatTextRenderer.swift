@@ -32,7 +32,20 @@ nonisolated struct ChatTextPiece: Identifiable, Sendable {
 
     nonisolated enum Kind: Sendable {
         case markdown(String, AttributedString)
-        case math(String, Bool)
+        /// LaTeX source, inline flag, and the readable Unicode drawn for it.
+        case math(String, Bool, String)
+    }
+}
+
+/// One drawn line of a block: running text with its inline formulas inside
+/// it, or a display formula on a line of its own.
+nonisolated struct ChatTextLine: Identifiable, Sendable {
+    let id: Int
+    let kind: Kind
+
+    nonisolated enum Kind: Sendable {
+        case text(AttributedString)
+        case display(String)
     }
 }
 
@@ -79,13 +92,6 @@ actor ChatTextRenderer {
 /// presentation intents: a full-syntax Markdown parse joins paragraphs, list
 /// items and headings with no line break and drops every list number.
 nonisolated enum ChatTextParser {
-    // This is the existing native scanner, moved unchanged and compiled once.
-    // Keep recognition changes aligned with the website's scanMathSpans contract.
-    private static let mathRegex = try? NSRegularExpression(
-        pattern: #"(\$\$([\s\S]*?)\$\$|\$([^\n$]+)\$)"#,
-        options: [.dotMatchesLineSeparators]
-    )
-
     fileprivate static let newline: UInt16 = 0x0A
     fileprivate static let carriageReturn: UInt16 = 0x0D
     fileprivate static let space: UInt16 = 0x20
@@ -105,6 +111,10 @@ nonisolated enum ChatTextParser {
     fileprivate static let backtick: UInt16 = 0x60
     fileprivate static let tilde: UInt16 = 0x7E
     fileprivate static let zero: UInt16 = 0x30
+    fileprivate static let dollar: UInt16 = 0x24
+    fileprivate static let openingParenthesis: UInt16 = 0x28
+    fileprivate static let openingBracket: UInt16 = 0x5B
+    fileprivate static let closingBracket: UInt16 = 0x5D
 
     static func segments(from text: String) throws -> [ChatTextSegment] {
         try Task.checkCancellation()
@@ -127,7 +137,7 @@ nonisolated enum ChatTextParser {
 
         var spans: [ChatMathSpan] = []
         for gap in gaps {
-            spans += try mathSpans(in: text, source: source, range: gap)
+            spans += try mathSpans(units, source: source, range: gap)
         }
 
         var builder = ChatBlockBuilder(source: source, units: units, spans: spans)
@@ -170,28 +180,255 @@ nonisolated enum ChatTextParser {
         )) ?? AttributedString(value)
     }
 
-    private static func mathSpans(in text: String, source: NSString, range: NSRange) throws -> [ChatMathSpan] {
-        try Task.checkCancellation()
-        guard range.length > 0, let regex = mathRegex else { return [] }
-        return regex.matches(in: text, options: [], range: range).compactMap { match -> ChatMathSpan? in
-            let display = match.range(at: 2)
-            let inline = match.range(at: 3)
-            if display.location != NSNotFound, display.length > 0 {
-                return ChatMathSpan(
-                    range: match.range,
-                    value: source.substring(with: display).trimmingCharacters(in: .whitespacesAndNewlines),
-                    inline: false
-                )
-            }
-            if inline.location != NSNotFound, inline.length > 0 {
-                return ChatMathSpan(
-                    range: match.range,
-                    value: source.substring(with: inline).trimmingCharacters(in: .whitespacesAndNewlines),
-                    inline: true
-                )
-            }
-            return nil
+    /// A block's pieces as drawn lines. An inline formula joins the text
+    /// around it, isolated left to right so it reads in order inside Arabic
+    /// and never breaks its sentence; a display formula starts its own line.
+    static func lines(_ pieces: [ChatTextPiece]) -> [ChatTextLine] {
+        var lines: [ChatTextLine] = []
+        var text = AttributedString()
+        var textID: Int?
+        var opensWithFormula = false
+        var mark: Character?
+
+        func flush() {
+            guard let id = textID else { return }
+            // A line that opens with a formula still takes its block's
+            // direction, from the mark marked() put on the block's words; a
+            // line of formulas and symbols alone reads left to right.
+            if opensWithFormula { text = AttributedString(String(mark ?? "\u{200E}")) + text }
+            lines.append(ChatTextLine(id: id, kind: .text(text)))
+            text = AttributedString()
+            textID = nil
+            opensWithFormula = false
+            mark = nil
         }
+
+        for piece in pieces {
+            switch piece.kind {
+            case .markdown(_, let words):
+                if textID == nil { textID = piece.id }
+                if mark == nil, let first = words.characters.first, first == "\u{200F}" || first == "\u{200E}" {
+                    mark = first
+                }
+                text += words
+            case .math(_, true, let readable):
+                if textID == nil {
+                    textID = piece.id
+                    opensWithFormula = true
+                }
+                text += AttributedString("\u{2066}" + readable + "\u{2069}")
+            case .math(_, false, let readable):
+                flush()
+                lines.append(ChatTextLine(id: piece.id, kind: .display(readable)))
+            }
+        }
+        flush()
+        return lines
+    }
+
+    // The one native answer to "where is the math", walked as the website's
+    // scanMathSpans walks it: \[…\] and $$…$$ are display, \(…\) and $…$
+    // inline, an escaped character or a `code` span is never a delimiter,
+    // and a $ pair is a formula only when it plausibly is one. Fences were
+    // cut out by the caller. Unlike the website, nothing reaches past its
+    // gap, and an inline formula or code span never reaches past its line.
+    private static func mathSpans(_ units: [UInt16], source: NSString, range: NSRange) throws -> [ChatMathSpan] {
+        try Task.checkCancellation()
+        var spans: [ChatMathSpan] = []
+        let end = NSMaxRange(range)
+
+        func add(_ start: Int, body: Int, bodyEnd: Int, stop: Int, inline: Bool) {
+            let value = source.substring(with: NSRange(location: body, length: bodyEnd - body))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty else { return }
+            spans.append(ChatMathSpan(range: NSRange(location: start, length: stop - start), value: value, inline: inline))
+        }
+
+        var index = range.location
+        while index < end {
+            let unit = units[index]
+            if unit == backslash {
+                let next = index + 1 < end ? units[index + 1] : 0
+                if next == openingBracket || next == openingParenthesis {
+                    let inline = next == openingParenthesis
+                    let closer = inline ? closingParenthesis : closingBracket
+                    var search = index + 2
+                    var close: Int?
+                    while search + 1 < end, !(inline && units[search] == newline) {
+                        if units[search] == backslash {
+                            if units[search + 1] == closer {
+                                close = search
+                                break
+                            }
+                            search += 1
+                        }
+                        search += 1
+                    }
+                    if let close {
+                        add(index, body: index + 2, bodyEnd: close, stop: close + 2, inline: inline)
+                        index = close + 2
+                        continue
+                    }
+                }
+                index += 2
+                continue
+            }
+            if unit == backtick {
+                var run = index
+                while run < end, units[run] == backtick { run += 1 }
+                let length = run - index
+                var search = run
+                var close: Int?
+                while search < end, units[search] != newline {
+                    guard units[search] == backtick else {
+                        search += 1
+                        continue
+                    }
+                    var closing = search
+                    while closing < end, units[closing] == backtick { closing += 1 }
+                    if closing - search == length {
+                        close = closing
+                        break
+                    }
+                    search = closing
+                }
+                index = close ?? run
+                continue
+            }
+            if unit == dollar {
+                if index + 1 < end, units[index + 1] == dollar {
+                    var search = index + 2
+                    var close: Int?
+                    while search + 1 < end {
+                        if units[search] == backslash {
+                            search += 2
+                            continue
+                        }
+                        if units[search] == dollar, units[search + 1] == dollar {
+                            close = search
+                            break
+                        }
+                        search += 1
+                    }
+                    if let close {
+                        add(index, body: index + 2, bodyEnd: close, stop: close + 2, inline: false)
+                        index = close + 2
+                    } else {
+                        // Still streaming: the opening pair stays text.
+                        index += 2
+                    }
+                    continue
+                }
+                var search = index + 1
+                var close: Int?
+                while search < end, units[search] != newline {
+                    if units[search] == backslash {
+                        search += search + 1 < end && units[search + 1] != newline ? 2 : 1
+                        continue
+                    }
+                    if units[search] == dollar {
+                        close = search
+                        break
+                    }
+                    search += 1
+                }
+                if let close,
+                   acceptsInline(source.substring(with: NSRange(location: index + 1, length: close - index - 1)),
+                                 next: close + 1 < end ? units[close + 1] : nil) {
+                    add(index, body: index + 1, bodyEnd: close, stop: close + 1, inline: true)
+                    index = close + 1
+                    continue
+                }
+                // No partner, or a pair that is not a formula: a literal dollar.
+                index += 1
+                continue
+            }
+            index += 1
+        }
+        return spans
+    }
+
+    /// The website's acceptInline, less the line rules a one-line body cannot
+    /// break: a price pair, Arabic prose or plain Latin prose is not a formula.
+    private static func acceptsInline(_ body: String, next: UInt16?) -> Bool {
+        guard !body.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
+        // "$5 for tea and $3": digit-led on both sides of the pair.
+        if let first = body.unicodeScalars.first, isAnyDigit(first.value),
+           let next, isAnyDigit(UInt32(next)) {
+            return false
+        }
+        // Arabic reaches real math only inside \text{…}; two Arabic letters
+        // in a row anywhere else are a sentence adopted as an equation.
+        var run = 0
+        for scalar in withoutTextGroups(body) {
+            switch scalar.value {
+            case 0x0620...0x065F, 0x066E...0x06D3, 0x06FA...0x06FC:
+                switch scalar.properties.generalCategory {
+                case .uppercaseLetter, .lowercaseLetter, .titlecaseLetter, .modifierLetter, .otherLetter:
+                    run += 1
+                    if run > 1 { return false }
+                default:
+                    break
+                }
+            default:
+                run = 0
+            }
+        }
+        // Four or more Latin words and not one TeX construct among them.
+        let words = body.split(whereSeparator: { $0.isWhitespace })
+        if words.count >= 4, !body.contains(where: { "\\^_{}=".contains($0) }) { return false }
+        return true
+    }
+
+    private static func isAnyDigit(_ value: UInt32) -> Bool {
+        (0x30...0x39).contains(value) || (0x0660...0x0669).contains(value) || (0x06F0...0x06F9).contains(value)
+    }
+
+    /// A formula with its \text{…}-style groups blanked out, as the
+    /// website's mathWithoutTextGroups reads it.
+    private static func withoutTextGroups(_ body: String) -> [Unicode.Scalar] {
+        let scalars = Array(body.unicodeScalars)
+        var output: [Unicode.Scalar] = []
+        var index = 0
+        while index < scalars.count {
+            if scalars[index] == "\\" {
+                var position = index + 1
+                var name = ""
+                while position < scalars.count, scalars[position].isASCII, scalars[position].properties.isAlphabetic {
+                    name.unicodeScalars.append(scalars[position])
+                    position += 1
+                }
+                if ["text", "textrm", "textbf", "textit", "textsf", "texttt", "textnormal", "mbox", "operatorname", "mathrm"]
+                    .contains(name) {
+                    if position < scalars.count, scalars[position] == "*" { position += 1 }
+                    while position < scalars.count, scalars[position] == " " { position += 1 }
+                    if position < scalars.count, scalars[position] == "{" {
+                        var level = 1
+                        position += 1
+                        while position < scalars.count, level > 0 {
+                            if scalars[position] == "\\" {
+                                position += 2
+                                continue
+                            }
+                            if scalars[position] == "{" {
+                                level += 1
+                            } else if scalars[position] == "}" {
+                                level -= 1
+                            }
+                            position += 1
+                        }
+                        if level == 0 {
+                            output.append(" ")
+                            index = position
+                            continue
+                        }
+                    }
+                }
+            }
+            output.append(scalars[index])
+            index += 1
+        }
+        return output
     }
 
     // Fences as the website's Markdown renderer reads them: three or more of
@@ -386,10 +623,26 @@ nonisolated enum ChatTextParser {
         var buffer = ""
         var bufferStart: Int?
 
-        func flush() {
-            let value = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Text is trimmed at a block or display edge, but keeps the spaces
+        // that part it from an inline formula: both are drawn in one line.
+        // Those spaces stay outside the Markdown parse, which may trim them.
+        func flush(before next: ChatMathSpan?) {
+            var afterInline = false
+            if case .math(_, true, _)? = result.last?.kind { afterInline = true }
+            var value = buffer
+            if !afterInline { value = String(value.drop(while: { $0.isWhitespace })) }
+            if next?.inline != true {
+                while value.last?.isWhitespace == true { value.removeLast() }
+            }
             if let start = bufferStart, !value.isEmpty {
-                result.append(ChatTextPiece(id: start, kind: .markdown(value, ChatTextParser.inlineMarkdown(value))))
+                let leading = String(value.prefix(while: { $0.isWhitespace }))
+                let core = value.dropFirst(leading.count)
+                let trailing = String(core.reversed().prefix(while: { $0.isWhitespace }).reversed())
+                let words = String(core.dropLast(trailing.count))
+                var text = AttributedString(leading)
+                if !words.isEmpty { text += ChatTextParser.inlineMarkdown(words) }
+                text += AttributedString(trailing)
+                result.append(ChatTextPiece(id: start, kind: .markdown(value, text)))
             }
             buffer = ""
             bufferStart = nil
@@ -402,33 +655,60 @@ nonisolated enum ChatTextParser {
         }
 
         for (index, line) in lines.enumerated() {
-            if index > 0, bufferStart != nil { buffer += "\n" }
+            if index > 0 {
+                if bufferStart != nil {
+                    buffer += "\n"
+                } else if case .math(_, true, _)? = result.last?.kind {
+                    // The break after a formula that ended the line above,
+                    // identified by the offset of that line break.
+                    bufferStart = line.location - 1
+                    buffer = "\n"
+                }
+            }
             let end = NSMaxRange(line)
             var cursor = line.location
             var spanIndex = firstSpan(spans, atOrAfter: cursor)
             while spanIndex < spans.count, spans[spanIndex].range.location < end {
                 let span = spans[spanIndex]
                 appendText(cursor, span.range.location)
-                flush()
-                result.append(ChatTextPiece(id: span.range.location, kind: .math(span.value, span.inline)))
+                flush(before: span)
+                result.append(ChatTextPiece(
+                    id: span.range.location,
+                    kind: .math(span.value, span.inline, ChatMathText.readable(span.value, inline: span.inline))
+                ))
                 cursor = NSMaxRange(span.range)
                 spanIndex += 1
             }
             appendText(cursor, end)
         }
-        flush()
+        flush(before: nil)
         return result
     }
 
-    /// Text takes its base direction from its first strong letter. The mark
-    /// makes it agree with the block's dominant script, so an Arabic sentence
-    /// that opens with a Latin term still reads right to left.
+    /// Text takes its base direction from its first strong letter, and each
+    /// line after a break is a paragraph of its own. The mark, at the start
+    /// and after every break, makes each line agree with the block's dominant
+    /// script, so an Arabic sentence that opens with a Latin term still reads
+    /// right to left.
     fileprivate static func marked(_ pieces: [ChatTextPiece], rightToLeft: Bool?) -> [ChatTextPiece] {
         guard let rightToLeft else { return pieces }
         let mark = AttributedString(rightToLeft ? "\u{200F}" : "\u{200E}")
         return pieces.map { piece -> ChatTextPiece in
             guard case .markdown(let value, let text) = piece.kind else { return piece }
-            return ChatTextPiece(id: piece.id, kind: .markdown(value, mark + text))
+            var result = mark
+            var start = text.startIndex
+            var index = text.startIndex
+            while index < text.endIndex {
+                let next = text.characters.index(after: index)
+                if text.characters[index].isNewline {
+                    result += text[start..<next]
+                    result += mark
+                    start = next
+                }
+                index = next
+            }
+            result += text[start..<text.endIndex]
+            return ChatTextPiece(id: piece.id, kind: .markdown(value, result))
         }
     }
 
@@ -494,9 +774,12 @@ nonisolated enum ChatTextParser {
         return NSRange(location: start, length: end - start)
     }
 
-    /// A table cell is one line of Text, so a formula inside it is shown as
-    /// code instead of being split into a row of its own.
-    fileprivate static func cellText(_ range: NSRange, source: NSString, spans: [ChatMathSpan]) -> AttributedString {
+    /// A table cell is one line of Text, so a formula inside it runs in the
+    /// cell's text as an isolated readable run, as it does in a paragraph.
+    /// Only the cell's words are counted toward its direction.
+    fileprivate static func cellText(
+        _ range: NSRange, source: NSString, spans: [ChatMathSpan], letters: inout ChatLetterCount
+    ) -> AttributedString {
         var text = AttributedString()
         var cursor = range.location
         let end = NSMaxRange(range)
@@ -504,16 +787,18 @@ nonisolated enum ChatTextParser {
         while spanIndex < spans.count, spans[spanIndex].range.location < end {
             let span = spans[spanIndex]
             if span.range.location > cursor {
-                text += inlineMarkdown(source.substring(with: NSRange(location: cursor, length: span.range.location - cursor)))
+                let words = inlineMarkdown(source.substring(with: NSRange(location: cursor, length: span.range.location - cursor)))
+                letters.add(words)
+                text += words
             }
-            var formula = AttributedString(span.value)
-            formula.inlinePresentationIntent = .code
-            text += formula
+            text += AttributedString("\u{2066}" + ChatMathText.readable(span.value, inline: true) + "\u{2069}")
             cursor = NSMaxRange(span.range)
             spanIndex += 1
         }
         if cursor < end {
-            text += inlineMarkdown(source.substring(with: NSRange(location: cursor, length: end - cursor)))
+            let words = inlineMarkdown(source.substring(with: NSRange(location: cursor, length: end - cursor)))
+            letters.add(words)
+            text += words
         }
         return text
     }
@@ -609,7 +894,7 @@ private nonisolated struct ChatLetterCount {
 
     /// Inline code is not counted, as the website's autoDirOne skips code and
     /// formula nodes: an identifier in an Arabic step does not make it
-    /// English. Table formulas are tagged code, so they are skipped too.
+    /// English. Formulas are never added here, in paragraphs or in tables.
     mutating func add(_ text: AttributedString) {
         for run in text.runs where run.inlinePresentationIntent?.contains(.code) != true {
             for scalar in text[run.range].unicodeScalars where scalar.properties.isAlphabetic {
@@ -844,12 +1129,494 @@ private nonisolated struct ChatBlockBuilder {
             }
             // A last line that is a lone bar is the next row still streaming.
             if index > 0, index == block.lines.count - 1, cells.count == 1, cells[0].length == 0 { continue }
-            let texts = cells.map { ChatTextParser.cellText($0, source: source, spans: spans) }
-            for text in texts { own.add(text) }
+            var texts: [AttributedString] = []
+            for cell in cells {
+                texts.append(ChatTextParser.cellText(cell, source: source, spans: spans, letters: &own))
+            }
             rows.append(ChatTableRow(id: line.location, cells: texts, isHeader: false))
         }
         letters.rightToLeft += own.rightToLeft
         letters.other += own.other
         return ChatTextSegment(id: block.id, kind: .table(rows), rightToLeft: own.direction)
+    }
+}
+
+/// LaTeX as readable Unicode, for a screen that does not typeset:
+/// x^2 → x², \frac{x+1}{2} → (x+1)/2, \sqrt{x} → √x, \int_0^1 → ∫₀¹.
+/// The symbol and script tables follow the website's texToUnicode; it never
+/// fails, and an unknown command keeps its name without the backslash.
+nonisolated enum ChatMathText {
+    static func readable(_ tex: String, inline: Bool) -> String {
+        var reader = ChatTexReader(tex, inline: inline)
+        return tidy(reader.sequence(until: nil))
+    }
+
+    /// One space between words, none at a line's ends or inside a bracket's
+    /// edge. A display formula breaks lines only where its source wrote \\.
+    static func tidy(_ text: String) -> String {
+        text.split(separator: "\n")
+            .map { line in
+                line.split(separator: " ").joined(separator: " ")
+                    .replacingOccurrences(of: "( ", with: "(")
+                    .replacingOccurrences(of: " )", with: ")")
+                    .replacingOccurrences(of: " ,", with: ",")
+            }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+    }
+
+    /// A raised or lowered run. When a character has no small form the run
+    /// is written ^(…) or _(…), as the website does.
+    static func script(_ value: String, superscript: Bool) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return "" }
+        let table = superscript ? superscripts : subscripts
+        var small = ""
+        var mapped = 0
+        var previous: Character?
+        var spaced = false
+        for character in trimmed {
+            if character.isWhitespace {
+                spaced = true
+                continue
+            }
+            // A space between two words is meaningful: "ln x" is not "lnx".
+            if spaced, let previous, isWord(previous), isWord(character) {
+                mapped = 0
+                break
+            }
+            spaced = false
+            previous = character
+            if let form = table[character] {
+                small += form
+                mapped += 1
+            } else if !superscript, [",", "→", "∞"].contains(character) {
+                // A limit such as x → 0 keeps its arrow on the line.
+                small.append(character)
+            } else {
+                mapped = 0
+                break
+            }
+        }
+        if mapped > 0 { return small }
+        let mark = superscript ? "^" : "_"
+        return trimmed.count == 1 ? mark + trimmed : mark + "(" + trimmed + ")"
+    }
+
+    /// A fraction's part keeps brackets only when it is more than one term:
+    /// an operator outside brackets, or a space between two words. Under the
+    /// bar a coefficient counts too, so 1/(2a) never reads as (1/2)a.
+    static func grouped(_ part: String, denominator: Bool = false) -> String {
+        let value = part.trimmingCharacters(in: .whitespaces)
+        var level = 0
+        var previous: Character?
+        var spaced = false
+        for (offset, character) in value.enumerated() {
+            if character.isWhitespace {
+                spaced = true
+                continue
+            }
+            defer {
+                previous = character
+                spaced = false
+            }
+            switch character {
+            case "(", "[", "{", "⟨":
+                level += 1
+            case ")", "]", "}", "⟩":
+                level -= 1
+            default:
+                guard level == 0 else { continue }
+                let parted = spaced && previous.map(isWord) == true && isWord(character)
+                let coefficient = denominator && previous?.isNumber == true && character.isLetter
+                if parted || coefficient || (offset > 0 && compoundMarks.contains(character)) {
+                    return "(" + value + ")"
+                }
+            }
+        }
+        return value
+    }
+
+    /// √x for a number or a single symbol, √(…) for anything longer.
+    static func root(_ radicand: String, degree: String) -> String {
+        let value = radicand.trimmingCharacters(in: .whitespaces)
+        let index = degree.trimmingCharacters(in: .whitespaces)
+        let atom = value.count == 1 || (!value.isEmpty && value.allSatisfy { $0.isNumber || $0 == "." })
+        return (index.isEmpty ? "" : script(index, superscript: true)) + "√" + (atom ? value : "(" + value + ")")
+    }
+
+    /// Each character carries the mark, so \overline{AB} is one line over both.
+    static func overlined(_ value: String) -> String {
+        value.map { $0.isWhitespace ? String($0) : String($0) + "\u{0305}" }.joined()
+    }
+
+    static func accented(_ value: String, _ mark: String) -> String {
+        value.isEmpty ? "" : value + mark
+    }
+
+    /// \ce{…}: H2O → H₂O, SO4^{2-} → SO₄²⁻, -> → →.
+    static func chemistry(_ formula: String) -> String {
+        var text = formula
+        for (arrow, symbol) in [("<=>", "⇌"), ("<->", "↔"), ("->", "→"), ("<-", "←")] {
+            text = text.replacingOccurrences(of: arrow, with: symbol)
+        }
+        let characters = Array(text)
+        var output = ""
+        var index = 0
+        while index < characters.count {
+            let character = characters[index]
+            index += 1
+            if character == "^" {
+                var charge = ""
+                if index < characters.count, characters[index] == "{" {
+                    index += 1
+                    while index < characters.count, characters[index] != "}" {
+                        charge.append(characters[index])
+                        index += 1
+                    }
+                    index += 1
+                } else {
+                    while index < characters.count, characters[index].isNumber || "+-".contains(characters[index]) {
+                        charge.append(characters[index])
+                        index += 1
+                    }
+                }
+                output += script(charge, superscript: true)
+            } else if character == "\\" {
+                var name = ""
+                while index < characters.count, characters[index].isASCII, characters[index].isLetter {
+                    name.append(characters[index])
+                    index += 1
+                }
+                output += symbols[name] ?? name
+            } else if character.isASCII, character.isNumber, let previous = output.last,
+                      previous.isLetter || previous == ")" || subscriptDigits.contains(previous) {
+                output += subscripts[character] ?? String(character)
+            } else if character != "{", character != "}" {
+                output.append(character)
+            }
+        }
+        return output
+    }
+
+    private static func isWord(_ character: Character) -> Bool {
+        character.isLetter || character.isNumber
+    }
+
+    private static let compoundMarks: Set<Character> = [
+        "+", "-", "−", "±", "∓", "=", "≠", "<", ">", "≤", "≥", "≈", "≡", "/", "·", "×", "÷", ",", "→",
+    ]
+
+    private static let subscriptDigits: Set<Character> = ["₀", "₁", "₂", "₃", "₄", "₅", "₆", "₇", "₈", "₉"]
+
+    static let superscripts: [Character: String] = [
+        "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴", "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",
+        "+": "⁺", "-": "⁻", "−": "⁻", "=": "⁼", "(": "⁽", ")": "⁾",
+        "a": "ᵃ", "b": "ᵇ", "c": "ᶜ", "d": "ᵈ", "e": "ᵉ", "f": "ᶠ", "g": "ᵍ", "h": "ʰ", "i": "ⁱ", "j": "ʲ",
+        "k": "ᵏ", "l": "ˡ", "m": "ᵐ", "n": "ⁿ", "o": "ᵒ", "p": "ᵖ", "r": "ʳ", "s": "ˢ", "t": "ᵗ", "u": "ᵘ",
+        "v": "ᵛ", "w": "ʷ", "x": "ˣ", "y": "ʸ", "z": "ᶻ",
+        "A": "ᴬ", "B": "ᴮ", "D": "ᴰ", "E": "ᴱ", "G": "ᴳ", "H": "ᴴ", "I": "ᴵ", "J": "ᴶ", "K": "ᴷ", "L": "ᴸ",
+        "M": "ᴹ", "N": "ᴺ", "O": "ᴼ", "P": "ᴾ", "R": "ᴿ", "T": "ᵀ", "U": "ᵁ", "V": "ⱽ", "W": "ᵂ",
+        "α": "ᵅ", "β": "ᵝ", "γ": "ᵞ", "δ": "ᵟ", "θ": "ᶿ", "φ": "ᵠ", "χ": "ᵡ",
+        "∘": "°", "°": "°", "′": "′", "'": "′", "*": "*",
+    ]
+
+    static let subscripts: [Character: String] = [
+        "0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄", "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉",
+        "+": "₊", "-": "₋", "−": "₋", "=": "₌", "(": "₍", ")": "₎",
+        "a": "ₐ", "e": "ₑ", "h": "ₕ", "i": "ᵢ", "j": "ⱼ", "k": "ₖ", "l": "ₗ", "m": "ₘ", "n": "ₙ", "o": "ₒ",
+        "p": "ₚ", "r": "ᵣ", "s": "ₛ", "t": "ₜ", "u": "ᵤ", "v": "ᵥ", "x": "ₓ",
+        "β": "ᵦ", "γ": "ᵧ", "ρ": "ᵨ", "φ": "ᵩ", "χ": "ᵪ",
+    ]
+
+    static let symbols: [String: String] = [
+        "alpha": "α", "beta": "β", "gamma": "γ", "delta": "δ", "epsilon": "ε", "varepsilon": "ε", "zeta": "ζ",
+        "eta": "η", "theta": "θ", "vartheta": "ϑ", "iota": "ι", "kappa": "κ", "lambda": "λ", "mu": "μ", "nu": "ν",
+        "xi": "ξ", "omicron": "ο", "pi": "π", "varpi": "ϖ", "rho": "ρ", "varrho": "ϱ", "sigma": "σ",
+        "varsigma": "ς", "tau": "τ", "upsilon": "υ", "phi": "φ", "varphi": "φ", "chi": "χ", "psi": "ψ",
+        "omega": "ω", "Gamma": "Γ", "Delta": "Δ", "Theta": "Θ", "Lambda": "Λ", "Xi": "Ξ", "Pi": "Π",
+        "Sigma": "Σ", "Upsilon": "Υ", "Phi": "Φ", "Psi": "Ψ", "Omega": "Ω",
+        "int": "∫", "iint": "∬", "iiint": "∭", "oint": "∮", "sum": "Σ", "prod": "∏", "coprod": "∐",
+        "bigcup": "⋃", "bigcap": "⋂", "infty": "∞", "partial": "∂", "nabla": "∇",
+        "times": "×", "cdot": "·", "cdotp": "·", "cdots": "⋯", "ldots": "…", "dots": "…", "vdots": "⋮",
+        "ddots": "⋱", "div": "÷", "pm": "±", "mp": "∓", "ast": "∗", "star": "⋆", "circ": "∘", "bullet": "•",
+        "oplus": "⊕", "otimes": "⊗", "odot": "⊙", "setminus": "∖",
+        "leq": "≤", "le": "≤", "leqslant": "≤", "geq": "≥", "ge": "≥", "geqslant": "≥", "neq": "≠", "ne": "≠",
+        "approx": "≈", "equiv": "≡", "sim": "∼", "simeq": "≃", "cong": "≅", "propto": "∝", "ll": "≪",
+        "gg": "≫", "mid": "|", "parallel": "∥", "perp": "⊥", "lt": "<", "gt": ">",
+        "to": "→", "rightarrow": "→", "leftarrow": "←", "gets": "←", "Rightarrow": "⇒", "Leftarrow": "⇐",
+        "Leftrightarrow": "⇔", "leftrightarrow": "↔", "longrightarrow": "⟶", "longleftarrow": "⟵",
+        "Longrightarrow": "⟹", "Longleftarrow": "⟸", "longleftrightarrow": "⟷", "Longleftrightarrow": "⟺",
+        "implies": "⟹", "impliedby": "⟸", "iff": "⟺", "mapsto": "↦", "uparrow": "↑", "downarrow": "↓",
+        "rightleftharpoons": "⇌",
+        "in": "∈", "notin": "∉", "ni": "∋", "subset": "⊂", "subseteq": "⊆", "supset": "⊃", "supseteq": "⊇",
+        "cup": "∪", "cap": "∩", "emptyset": "∅", "varnothing": "∅", "forall": "∀", "exists": "∃",
+        "nexists": "∄", "land": "∧", "wedge": "∧", "lor": "∨", "vee": "∨", "neg": "¬", "lnot": "¬",
+        "therefore": "∴", "because": "∵",
+        "angle": "∠", "measuredangle": "∡", "triangle": "△", "square": "□", "degree": "°", "prime": "′",
+        "aleph": "ℵ", "hbar": "ℏ", "ell": "ℓ", "Re": "ℜ", "Im": "ℑ", "checkmark": "✓", "dagger": "†",
+        "langle": "⟨", "rangle": "⟩", "lfloor": "⌊", "rfloor": "⌋", "lceil": "⌈", "rceil": "⌉",
+        "lbrace": "{", "rbrace": "}", "vert": "|", "lvert": "|", "rvert": "|", "Vert": "‖", "lVert": "‖",
+        "rVert": "‖", "colon": ":",
+        "quad": " ", "qquad": "  ", "enspace": " ", "thinspace": " ",
+    ]
+
+    /// Named functions, drawn upright and set apart from the term they take.
+    static let functions: Set<String> = [
+        "sin", "cos", "tan", "cot", "sec", "csc", "arcsin", "arccos", "arctan", "sinh", "cosh", "tanh", "coth",
+        "log", "ln", "lg", "exp", "lim", "liminf", "limsup", "max", "min", "sup", "inf", "det", "deg", "dim",
+        "gcd", "lcm", "arg", "ker", "hom", "Pr",
+    ]
+
+    static let doubleStruck: [Character: Character] = [
+        "N": "ℕ", "Z": "ℤ", "Q": "ℚ", "R": "ℝ", "C": "ℂ", "P": "ℙ", "H": "ℍ",
+    ]
+
+    static let negations: [String: String] = [
+        "=": "≠", "∈": "∉", "⊂": "⊄", "⊆": "⊈", "≡": "≢", "<": "≮", ">": "≯", "∃": "∄", "∼": "≁",
+        "≤": "≰", "≥": "≱",
+    ]
+}
+
+/// Reads one formula's TeX once, left to right. Braces group without being
+/// drawn; an unmatched closing brace is dropped rather than shown.
+private nonisolated struct ChatTexReader {
+    private let characters: [Character]
+    private let inline: Bool
+    private var index = 0
+    private var depth = 0
+    /// Open cases environments.
+    private var cases = 0
+
+    init(_ tex: String, inline: Bool) {
+        characters = Array(tex)
+        self.inline = inline
+    }
+
+    private var current: Character? {
+        index < characters.count ? characters[index] : nil
+    }
+
+    /// Reads up to the closer, which is consumed, or to the end.
+    mutating func sequence(until closer: Character?) -> String {
+        depth += 1
+        defer { depth -= 1 }
+        var output = ""
+        while let character = current {
+            if character == closer {
+                index += 1
+                return output
+            }
+            switch character {
+            case "\\":
+                output += command(after: output.last)
+            case "{":
+                if depth > 32 {
+                    output += rawArgument()
+                } else {
+                    index += 1
+                    output += sequence(until: "}")
+                }
+            case "}":
+                index += 1
+            case "^", "_":
+                index += 1
+                output += ChatMathText.script(argument(), superscript: character == "^")
+            case "&":
+                // Inside cases, & parts a value from its condition.
+                index += 1
+                output += cases > 0 ? ", " : " "
+            case "~", "\n", "\r", "\r\n", "\t":
+                index += 1
+                output += " "
+            default:
+                index += 1
+                output.append(character)
+            }
+        }
+        return output
+    }
+
+    /// One argument: a braced group, a command, or a single character.
+    private mutating func argument() -> String {
+        skipSpaces()
+        guard let character = current else { return "" }
+        // A pathological nest is kept as written rather than read deeper.
+        if depth > 32 { return character == "}" ? "" : rawArgument() }
+        depth += 1
+        defer { depth -= 1 }
+        switch character {
+        case "{":
+            index += 1
+            return sequence(until: "}")
+        case "}":
+            return ""
+        case "\\":
+            return command(after: nil)
+        default:
+            index += 1
+            return String(character)
+        }
+    }
+
+    /// A braced argument as written, unread.
+    private mutating func rawArgument() -> String {
+        skipSpaces()
+        guard let first = current else { return "" }
+        index += 1
+        guard first == "{" else { return String(first) }
+        var level = 1
+        var output = ""
+        while let character = current {
+            index += 1
+            if character == "\\", let escaped = current {
+                output.append(character)
+                output.append(escaped)
+                index += 1
+                continue
+            }
+            if character == "{" {
+                level += 1
+            } else if character == "}" {
+                level -= 1
+                if level == 0 { return output }
+            }
+            output.append(character)
+        }
+        return output
+    }
+
+    private mutating func skipSpaces() {
+        while let character = current, character.isWhitespace { index += 1 }
+    }
+
+    private mutating func command(after previous: Character?) -> String {
+        index += 1
+        guard let first = current else { return "" }
+        guard first.isASCII, first.isLetter else {
+            index += 1
+            switch first {
+            case "\\":
+                return inline ? " " : "\n"
+            case ",", ";", ":", ">", " ", "\n", "\r\n", "\t":
+                return " "
+            case "!":
+                return ""
+            case "|":
+                return "‖"
+            default:
+                // \{ \} \% \$ \& \# \_ are the characters themselves.
+                return String(first)
+            }
+        }
+        var name = ""
+        while let character = current, character.isASCII, character.isLetter {
+            name.append(character)
+            index += 1
+        }
+        if current == "*", ["operatorname", "hspace", "vspace"].contains(name) { index += 1 }
+
+        switch name {
+        case "frac", "dfrac", "tfrac", "cfrac":
+            let top = argument()
+            let bottom = argument()
+            // Set apart from a term it touches: 2\frac{1}{2} is not 21/2.
+            let leading = previous.map { $0.isLetter || $0.isNumber || $0 == ")" } == true ? " " : ""
+            let trailing = nextStartsTerm(orBracket: true) ? " " : ""
+            return leading + ChatMathText.grouped(top) + "/" + ChatMathText.grouped(bottom, denominator: true) + trailing
+        case "sqrt":
+            skipSpaces()
+            var degree = ""
+            // Past the cap the "[" is read as one character by argument(),
+            // so \sqrt[\sqrt[… cannot recurse without limit.
+            if current == "[", depth <= 32 {
+                index += 1
+                degree = sequence(until: "]")
+            }
+            return ChatMathText.root(argument(), degree: degree)
+        case "left", "right", "middle", "big", "Big", "bigg", "Bigg", "bigl", "bigr", "Bigl", "Bigr",
+             "biggl", "biggr", "Biggl", "Biggr":
+            skipSpaces()
+            // \left. and \right. are invisible delimiters.
+            if current == "." { index += 1 }
+            return ""
+        case "displaystyle", "textstyle", "scriptstyle", "scriptscriptstyle", "limits", "nolimits",
+             "nonumber", "notag":
+            return ""
+        case "begin", "end":
+            let environment = argument()
+            if name == "begin", environment == "array" || environment == "tabular" { _ = rawArgument() }
+            if environment == "cases" { cases = max(0, cases + (name == "begin" ? 1 : -1)) }
+            return " "
+        case "text", "textrm", "textbf", "textit", "textsf", "texttt", "textnormal", "textup", "emph", "mbox",
+             "hbox", "mathrm", "mathbf", "mathit", "mathsf", "mathtt", "mathcal", "mathscr", "mathfrak",
+             "boldsymbol", "bm", "operatorname", "underline", "boxed", "fbox", "underbrace", "overbrace",
+             "ensuremath":
+            return argument()
+        case "mathbb":
+            return String(argument().map { ChatMathText.doubleStruck[$0] ?? $0 })
+        case "overline", "bar":
+            return ChatMathText.overlined(argument())
+        case "vec", "overrightarrow":
+            return ChatMathText.accented(argument(), "\u{20D7}")
+        case "hat", "widehat":
+            return ChatMathText.accented(argument(), "\u{0302}")
+        case "tilde", "widetilde":
+            return ChatMathText.accented(argument(), "\u{0303}")
+        case "dot":
+            return ChatMathText.accented(argument(), "\u{0307}")
+        case "ddot":
+            return ChatMathText.accented(argument(), "\u{0308}")
+        case "binom", "dbinom", "tbinom":
+            let total = argument()
+            let chosen = argument()
+            return "C(" + total + ", " + chosen + ")"
+        case "pmod":
+            return " (mod " + argument() + ")"
+        case "bmod", "mod":
+            return " mod "
+        case "tag":
+            return "  (" + argument() + ")"
+        case "hspace", "phantom", "hphantom":
+            _ = rawArgument()
+            return " "
+        case "vspace", "vphantom", "color", "label":
+            _ = rawArgument()
+            return ""
+        case "textcolor", "colorbox":
+            _ = rawArgument()
+            return argument()
+        case "not":
+            let negated = argument()
+            return ChatMathText.negations[negated] ?? negated + "\u{0338}"
+        case "ce", "pu":
+            return ChatMathText.chemistry(rawArgument())
+        default:
+            if let symbol = ChatMathText.symbols[name] {
+                // ∂ and ∇ belong to the variable after them: ∂f/∂x.
+                if name == "partial" || name == "nabla" { skipSpaces() }
+                return symbol
+            }
+            // A function, or a command this reader does not know, keeps its
+            // name, set apart from the term it takes: \sin\theta → sin θ.
+            return nextStartsTerm(orBracket: false) ? name + " " : name
+        }
+    }
+
+    /// Whether what follows starts a term that would run into a name or a
+    /// fraction: a letter, a digit, a Greek letter or a function.
+    private func nextStartsTerm(orBracket bracket: Bool) -> Bool {
+        guard let next = current else { return false }
+        if next.isLetter || next.isNumber || (bracket && next == "(") { return true }
+        guard next == "\\" else { return false }
+        var name = ""
+        var position = index + 1
+        while position < characters.count, characters[position].isASCII, characters[position].isLetter {
+            name.append(characters[position])
+            position += 1
+        }
+        if bracket, name == "left" { return true }
+        if ChatMathText.functions.contains(name) || ["frac", "dfrac", "tfrac", "sqrt"].contains(name) { return true }
+        return ChatMathText.symbols[name]?.first?.isLetter == true
     }
 }

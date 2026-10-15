@@ -5,6 +5,7 @@ import Foundation
     static func main() async throws {
         let session = SessionStore()
         let api = FirasAPI()
+        api.classificationResult = chatAnswer
         let testDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("firas-code-race-" + UUID().uuidString, isDirectory: true)
         let repository = CodeProjectRepository(directory: testDirectory)
         let defaults = UserDefaults(suiteName: "firas-code-race-test-" + UUID().uuidString)!
@@ -17,6 +18,7 @@ import Foundation
         store.startBuild(projectName: "Old request", prompt: "Explain something", language: .english)
         try await waitUntil { api.pendingStarts.count == 1 }
         precondition(api.starts[0].mgen == "1.1", "Code captures the website's current model generation")
+        precondition(api.starts[0].kind == .chat && api.starts[0].product == .ai, "a validated chat verdict is answered as a reply")
 
         session.identityID = "owner-two"
         var loadedNewAccount = false
@@ -130,6 +132,47 @@ import Foundation
         precondition(goneStore.buildNotice == .expired && goneDefaults.data(forKey: pointerKey) == nil && goneAPI.statusRequests.count == 1,
                      "404 ends the build at once and clears its pointer")
 
+        // STORE-6: Build pressed while the intent classifier cannot answer stays
+        // a build. A thrown 503 and an unreadable verdict both admit a Code build;
+        // only a validated verdict that is not a web build turns into a reply.
+        let (downAPI, downDefaults, downRepository) = scenario("classifier-down", under: scenarioRoot)
+        downAPI.delayClassification = true
+        let downStore = CodeStore(session: SessionStore(), api: downAPI, defaults: downDefaults, repository: downRepository)
+        downStore.startBuild(projectName: "Calculator", prompt: "Build a calculator website", language: .english)
+        try await waitUntil { downAPI.pendingClassifications.count == 1 }
+        downAPI.pendingClassifications.removeFirst().resume(throwing: APIError.httpStatus(503, "intent_unavailable"))
+        try await waitUntil { downAPI.pendingStarts.count == 1 }
+        precondition(downAPI.starts[0].kind == .codeBuild && downAPI.starts[0].product == .code
+                     && !downAPI.starts[0].messages.contains { $0.role == .system },
+                     "a classifier that failed leaves Build a build, without the clarification instruction")
+        downAPI.resolveStart(jobID: "down-job", phase: .completed, text: projectText)
+        try await waitUntil { !downStore.isBuilding }
+        precondition(indexContent(downStore.workspace) == "<h1>new project</h1>" && downStore.lastResponse == nil,
+                     "the build lands as a project, not as a chat reply")
+
+        let (unreadAPI, unreadDefaults, unreadRepository) = scenario("classifier-unread", under: scenarioRoot)
+        unreadAPI.classificationResult = .unavailable
+        let unreadStore = CodeStore(session: SessionStore(), api: unreadAPI, defaults: unreadDefaults, repository: unreadRepository)
+        unreadStore.startBuild(projectName: "Timer", prompt: "Build a timer page", language: .english)
+        try await waitUntil { unreadAPI.pendingStarts.count == 1 }
+        precondition(unreadAPI.starts[0].kind == .codeBuild && unreadAPI.starts[0].product == .code,
+                     "an unreadable verdict is not a decision to reply")
+        unreadAPI.resolveStart(jobID: "unread-job", phase: .completed, text: projectText)
+        try await waitUntil { !unreadStore.isBuilding }
+
+        let (sourceAPI, sourceDefaults, sourceRepository) = scenario("classifier-source", under: scenarioRoot)
+        sourceAPI.classificationResult = IntentDecision(ok: true, kind: "code", requirements: "", classified: true,
+                                                        codeTarget: "source", codeLanguage: "python")
+        let sourceStore = CodeStore(session: SessionStore(), api: sourceAPI, defaults: sourceDefaults, repository: sourceRepository)
+        sourceStore.startBuild(projectName: "Renamer", prompt: "Write a Python script that renames files", language: .english)
+        try await waitUntil { sourceAPI.pendingStarts.count == 1 }
+        precondition(sourceAPI.starts[0].kind == .chat && sourceAPI.starts[0].product == .ai
+                     && sourceAPI.starts[0].messages.first?.role == .system,
+                     "a validated verdict for source code is still answered as a reply")
+        sourceAPI.resolveStart(jobID: "source-job", phase: .completed, text: "print('renamed')")
+        try await waitUntil { !sourceStore.isBuilding }
+        precondition(sourceStore.lastResponse == "print('renamed')", "the reply reaches the reader")
+
         // UX-27: Stop on a running build cancels the server job exactly once.
         let (stopAPI, stopDefaults, stopRepository) = scenario("stop", under: scenarioRoot)
         let stopStore = CodeStore(session: SessionStore(), api: stopAPI, defaults: stopDefaults, repository: stopRepository)
@@ -167,6 +210,46 @@ import Foundation
         try await waitUntil { !earlyStore.isBuilding }
         precondition(earlyAPI.cancelledJobs == ["early-job"] && earlyAPI.statusRequests.isEmpty && earlyDefaults.data(forKey: pointerKey) == nil,
                      "the job admitted after Stop is cancelled once and never watched")
+
+        // STORE-23: a press is remembered while the classifier answers, so the
+        // app closing then does not lose it; a Stop in that window forgets it.
+        let (closedAPI, closedDefaults, closedRepository) = scenario("closed-while-classifying", under: scenarioRoot)
+        closedAPI.delayClassification = true
+        let closedSession = SessionStore()
+        let closedStore = CodeStore(session: closedSession, api: closedAPI, defaults: closedDefaults, repository: closedRepository)
+        closedStore.startBuild(projectName: "Kept press", prompt: "Build a notes page", language: .english)
+        try await waitUntil { closedAPI.pendingClassifications.count == 1 }
+        precondition(closedDefaults.data(forKey: pointerKey) != nil, "a Build press is remembered before the classifier answers")
+        let reopenedAPI = FirasAPI()
+        reopenedAPI.classificationResult = webBuild
+        let reopened = CodeStore(session: SessionStore(), api: reopenedAPI, defaults: closedDefaults, repository: closedRepository)
+        reopened.resumeIfNeeded()
+        try await waitUntil { reopenedAPI.pendingStarts.count == 1 }
+        precondition(reopenedAPI.classificationCount == 1 && reopenedAPI.starts[0].kind == .codeBuild,
+                     "the next launch classifies the remembered press again and builds it")
+        reopenedAPI.resolveStart(jobID: "reopened-job", phase: .completed, text: projectText)
+        try await waitUntil { !reopened.isBuilding }
+        // The first launch is gone: its late classifier answer belongs to no current owner.
+        closedSession.identityID = "closed-launch"
+        closedAPI.pendingClassifications.removeFirst().resume(returning: webBuild)
+
+        let (classifyingStopAPI, classifyingStopDefaults, classifyingStopRepository) = scenario("stop-while-classifying", under: scenarioRoot)
+        classifyingStopAPI.delayClassification = true
+        let classifyingStore = CodeStore(session: SessionStore(), api: classifyingStopAPI, defaults: classifyingStopDefaults,
+                                         repository: classifyingStopRepository)
+        classifyingStore.startBuild(projectName: "Stopped press", prompt: "Build a clock page", language: .english)
+        try await waitUntil { classifyingStopAPI.pendingClassifications.count == 1 }
+        await classifyingStore.stopBuild()
+        precondition(classifyingStore.isStoppingBuild && classifyingStopDefaults.data(forKey: pointerKey) == nil,
+                     "a Stop while the classifier answers forgets the press at once")
+        let afterStop = CodeStore(session: SessionStore(), api: FirasAPI(), defaults: classifyingStopDefaults,
+                                  repository: classifyingStopRepository)
+        afterStop.resumeIfNeeded()
+        precondition(!afterStop.isBuilding, "closing the app before the classifier answers cannot bring a stopped build back")
+        classifyingStopAPI.pendingClassifications.removeFirst().resume(returning: webBuild)
+        try await waitUntil { !classifyingStore.isBuilding }
+        precondition(classifyingStopAPI.starts.isEmpty && classifyingStopDefaults.data(forKey: pointerKey) == nil,
+                     "the classifier's late answer after Stop submits nothing")
 
         // A Stop that cannot reach the server leaves the build running and watched.
         let (offlineAPI, offlineDefaults, offlineRepository) = scenario("stop-offline", under: scenarioRoot)
@@ -256,12 +339,14 @@ import Foundation
         if FileManager.default.fileExists(atPath: scenarioRoot.path) {
             try FileManager.default.removeItem(at: scenarioRoot)
         }
-        print("CLEAN: 35 production CodeStore ownership/recovery/build-lifecycle checks")
+        print("CLEAN: 46 production CodeStore ownership/recovery/build-lifecycle checks")
     }
 
     private static let pointerKey = "firas.ios.code-builds.v1"
     private static let webBuild = IntentDecision(ok: true, kind: "code", requirements: "",
         classified: true, codeTarget: "web", codeLanguage: "html")
+    private static let chatAnswer = IntentDecision(ok: true, kind: "chat", requirements: "",
+        classified: true, codeTarget: "unknown", codeLanguage: "unknown")
     private static let projectText = "```firas-project\n{\"name\":\"New site\",\"files\":[{\"path\":\"index.html\",\"content\":\"<h1>new project</h1>\"}]}\n```"
 
     /// A fresh transport, pointer suite and on-disk library per scenario, with a

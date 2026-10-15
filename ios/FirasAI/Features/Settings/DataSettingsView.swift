@@ -95,6 +95,8 @@ struct DataSettingsView: View {
                 }
             }
 
+            PrivacySettingsPanel()
+
             AboutSettingsPanel(presentsWhatsNew: $presentsWhatsNew)
 
             LocalPreferencesNote(compact: false)
@@ -126,8 +128,9 @@ struct DataSettingsView: View {
             switch result {
             case .success:
                 status = .success("settings.data.exported")
-            case .failure(let error):
-                status = .error(error.localizedDescription)
+            case .failure:
+                // The system's own sentence follows the device, not the app language.
+                status = .validationError("settings.data.exportFailed")
             }
             exportDocument = nil
         }
@@ -140,8 +143,8 @@ struct DataSettingsView: View {
             case .success(let urls):
                 guard let url = urls.first else { return }
                 readImport(url)
-            case .failure(let error):
-                status = .error(error.localizedDescription)
+            case .failure:
+                status = .validationError("settings.data.openFailed")
             }
         }
         .confirmationDialog(
@@ -259,7 +262,7 @@ struct DataSettingsView: View {
                 if let key = importValidationKey(for: error) {
                     status = .validationError(key)
                 } else {
-                    status = .error(error.localizedDescription)
+                    status = .validationError("settings.data.readFailed")
                 }
             }
         }
@@ -303,6 +306,68 @@ private enum DataStatus {
     case imported(Int)
     case validationError(LocalizedStringKey)
     case error(String)
+}
+
+/// The published policy and terms, and the one fact a reader must know before
+/// sending anything: what leaves the device and who processes it.
+private struct PrivacySettingsPanel: View {
+    var body: some View {
+        SettingsPanel(
+            "settings.privacy",
+            systemImage: "hand.raised",
+            footer: "settings.privacy.footer"
+        ) {
+            VStack(spacing: 2) {
+                SettingsLinkRow(
+                    title: "settings.privacy.policy",
+                    systemImage: "lock.doc",
+                    destination: AppConfiguration.privacyPolicyURL
+                )
+
+                SettingsDivider()
+
+                SettingsLinkRow(
+                    title: "settings.privacy.terms",
+                    systemImage: "doc.plaintext",
+                    destination: AppConfiguration.termsURL
+                )
+            }
+        }
+    }
+}
+
+/// Built like the What's New row; the trailing arrow says it leaves the app.
+private struct SettingsLinkRow: View {
+    let title: LocalizedStringKey
+    let systemImage: String
+    let destination: URL
+
+    @Environment(PreferencesStore.self) private var preferences
+
+    var body: some View {
+        Link(destination: destination) {
+            HStack(spacing: 12) {
+                Image(systemName: systemImage)
+                    .foregroundStyle(preferences.palette.accent)
+                    .frame(width: 24)
+                    .accessibilityHidden(true)
+
+                Text(title)
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(preferences.palette.textPrimary)
+
+                Spacer(minLength: 12)
+
+                Image(systemName: "arrow.up.forward")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(preferences.palette.textMuted)
+                    .accessibilityHidden(true)
+            }
+            .frame(minHeight: 52)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
 }
 
 private struct AboutSettingsPanel: View {
@@ -425,11 +490,11 @@ private struct WhatsNewSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("common.done") { dismiss() }
-                        .foregroundStyle(preferences.palette.accent)
+                    SettingsDoneButton { dismiss() }
                 }
             }
         }
+        .dynamicTypeSize(preferences.resolvedTypeSize)
     }
 }
 

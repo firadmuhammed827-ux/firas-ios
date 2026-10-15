@@ -79,6 +79,7 @@ nonisolated enum APIError: Error, Equatable, LocalizedError, Sendable {
     var receipts: [String: ChatJobReceipt] = [:]
     var delayReceipts = false
     var pendingReceipts: [CheckedContinuation<ChatJobReceipt, Error>] = []
+    var receiptFailure: APIError?
     var statusRequests: [String] = []
     var statusResults: [ChatJobStatus] = []
     var delayStatuses = false
@@ -166,6 +167,7 @@ nonisolated enum APIError: Error, Equatable, LocalizedError, Sendable {
         guard MediaCredentialScope.current != nil else { throw APIError.invalidRequest("chat_session_required") }
         operationScopes.append(("receipt", MediaCredentialScope.current?.cookieHeader))
         receiptRequests.append(cid)
+        if let receiptFailure { throw receiptFailure }
         if delayReceipts { return try await withCheckedThrowingContinuation { pendingReceipts.append($0) } }
         return receipts[cid] ?? ChatJobReceipt(jobId: "", phase: .unknown, cid: nil, chatId: nil)
     }

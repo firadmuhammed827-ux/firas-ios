@@ -15,12 +15,42 @@ nonisolated enum OmnixCloudPolicy {
     static func state(_ value: String) -> Bool {
         terminal(value) || ["reserved", "submission_uncertain", "queued", "running", "waiting_for_approval", "stopping"].contains(value)
     }
+
+    // The server admits a run inside the POST that carries it, so a request it
+    // received is listed by the next readable status. This long without it
+    // means the request never arrived (the media studio uses the same bound).
+    static let unknownReceiptWindow: TimeInterval = 180
+    // URLSession reports these before a request byte leaves the device. Only
+    // they prove a submission never arrived; a timeout or a lost reply proves nothing.
+    static let unsentTransportCodes: Set<Int> = [
+        URLError.Code.notConnectedToInternet.rawValue, URLError.Code.cannotFindHost.rawValue,
+        URLError.Code.cannotConnectToHost.rawValue, URLError.Code.dnsLookupFailed.rawValue,
+    ]
+
+    /// The pointer after one readable status that does not list its uncertain
+    /// request. The window counts from the first such answer and survives
+    /// relaunch in the pointer; a clock moved backwards restarts it, never
+    /// extends it. Once it has passed, the request key is let go (which ends
+    /// the uncertainty) and the session is kept.
+    static func afterUnknownReceipt(_ pointer: OmnixCloudPointer, answeredAt: Date) -> OmnixCloudPointer {
+        guard pointer.jobId == nil, pointer.requestKey != nil else { return pointer }
+        var next = pointer
+        if (next.receiptUnknownSince ?? .distantFuture) > answeredAt { next.receiptUnknownSince = answeredAt }
+        if let since = next.receiptUnknownSince, answeredAt.timeIntervalSince(since) >= unknownReceiptWindow {
+            next.requestKey = nil
+            next.receiptUnknownSince = nil
+        }
+        return next
+    }
 }
 
 nonisolated struct OmnixCloudPointer: Codable, Equatable, Sendable {
     var jobId: String?
     var sessionId: String?
     var requestKey: String?
+    /// When a readable status first did not list the uncertain request. A
+    /// time, never a prompt or output; absent from the stored JSON while nil.
+    var receiptUnknownSince: Date? = nil
 
     var isValid: Bool {
         (jobId == nil || OmnixCloudPolicy.jobID(jobId!)) &&

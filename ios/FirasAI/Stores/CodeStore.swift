@@ -100,6 +100,9 @@ final class CodeStore {
     /// The job a Stop was sent for. Its later "cancelled" ending is that Stop
     /// landing, not a failure.
     @ObservationIgnored private var stopRequestedJobID: String?
+    /// The cid of a new press still waiting for the classifier. Nothing has
+    /// been submitted under it, so a Stop then removes its pointer at once.
+    @ObservationIgnored private var classifyingCID: String?
 
     private static let pointerMapKey = "firas.ios.code-builds.v1"
     private static let maximumRecoveryAttempts = 6
@@ -351,6 +354,11 @@ final class CodeStore {
         errorMessage = nil
         buildNotice = nil
         lastResponse = nil
+        // Remembered unclassified before the classifier is asked, so a press
+        // survives the app being closed meanwhile: resumeIfNeeded classifies
+        // it again at the next launch.
+        persist(pointer)
+        classifyingCID = pointer.cid
 
         // Store-owned: leaving the Code screen only removes the viewer. It
         // never cancels the durable server build.
@@ -359,13 +367,19 @@ final class CodeStore {
             let context = IntentContext(product: "code", history: self.intentHistory, projectFiles: self.workspace?.files.map(\.path) ?? [])
             let decision = (try? await self.api.classifyIntent(text: cleanPrompt, context: context)) ?? .unavailable
             guard self.isCurrentOwner(ownerID, generation: generation), !Task.isCancelled else { return }
-            // Stopped before admission: nothing was persisted or submitted.
+            if self.classifyingCID == pointer.cid { self.classifyingCID = nil }
+            // Stopped before admission: nothing was submitted, and Stop already
+            // removed the pointer.
             if self.isStoppingBuild {
                 self.endBuild(ownerID: ownerID, phase: nil)
                 return
             }
             var classifiedPointer = pointer
-            classifiedPointer.replyOnly = !decision.permitsBrowserBuild
+            // The reader pressed Build. Only a validated verdict that this is not
+            // a browser project turns the press into a reply. A classifier that
+            // could not answer (timeout, 503, 429, an unreadable verdict) proves
+            // nothing, so the press stays a build, never a silent chat turn.
+            classifiedPointer.replyOnly = decision.isValidated && !decision.permitsBrowserBuild
             classifiedPointer.intentInstruction = decision.conversationInstruction
             self.persist(classifiedPointer)
             await self.enqueueAndPoll(classifiedPointer, generation: generation)
@@ -395,13 +409,15 @@ final class CodeStore {
             if pointer.jobID == nil {
                 var prepared = pointer
                 if prepared.replyOnly == nil {
-                    // Older app versions persisted an unclassified pending build. Reclassify before admission.
+                    // A press closed before its classifier answered (or an older
+                    // app version's pending build). Reclassify before admission.
                     let result = (try? await self.api.classifyIntent(text: pointer.prompt,
                         context: IntentContext(product: "code"))) ?? .unavailable
                     guard self.isCurrentOwner(ownerID, generation: generation), !Task.isCancelled else { return }
                     // A Stop meanwhile is settled by enqueueAndPoll: an older
                     // launch may already have submitted this cid.
-                    prepared.replyOnly = !result.permitsBrowserBuild
+                    // Same rule as startBuild: an unavailable verdict stays a build.
+                    prepared.replyOnly = result.isValidated && !result.permitsBrowserBuild
                     prepared.intentInstruction = result.conversationInstruction
                     self.persist(prepared)
                 }
@@ -433,6 +449,12 @@ final class CodeStore {
         errorMessage = nil
         buildNotice = nil
         guard let jobID = activeJobID else {
+            // A new press the classifier has not answered has submitted
+            // nothing. Its pointer goes now, so closing the app before that
+            // answer cannot bring the stopped build back at the next launch.
+            if let cid = classifyingCID, persistedPointer(for: ownerID)?.cid == cid {
+                removePersistedPointer(for: ownerID)
+            }
             // No job id yet. A watcher still classifying or submitting sees the
             // stop at its next step. One waiting out a failed admission is idle,
             // so Stop takes over here: that admission may still have reached the
@@ -681,7 +703,9 @@ final class CodeStore {
                         if terminalWithoutProject > 15 {
                             await finishFailed(
                                 pointer,
-                                message: "The build finished without a readable Firas project.",
+                                message: pointer.language == .english
+                                    ? "The build finished without a readable Firas project. Try again."
+                                    : "انتهى البناء دون مشروع فِراس صالح للقراءة. أعد المحاولة.",
                                 generation: generation
                             )
                             return
@@ -693,7 +717,8 @@ final class CodeStore {
                         buildNotice = nil
                         return
                     } else {
-                        await finishFailed(pointer, message: status.error ?? "The build did not finish.", generation: generation)
+                        await finishFailed(pointer, message: readableBuildError(status.error, language: pointer.language),
+                                           generation: generation)
                         return
                     }
                 }
@@ -989,6 +1014,7 @@ final class CodeStore {
         awaitingRecovery = false
         buildPointer = nil
         stopRequestedJobID = nil
+        classifyingCID = nil
         activeJobID = nil
         buildPhase = nil
         buildProgress = nil
@@ -1050,11 +1076,43 @@ final class CodeStore {
         }
     }
 
+    /// Short next-step text in the app language, worded as Chat words it: by
+    /// HTTP status, server code or connection problem. Server and system text
+    /// is never shown.
     private func message(for error: Error) -> String {
-        if let apiError = error as? APIError {
-            return apiError.errorDescription ?? "تعذّر الاتصال بالخادم."
+        let english = defaults.string(forKey: "lang") == AppLanguage.english.rawValue
+        guard let apiError = error as? APIError else { return FirasErrorText.generic(english: english) }
+        switch apiError {
+        case .httpStatus(let status, let message):
+            let code: String? = message
+            return FirasErrorText.text(status: status, code: code, english: english)
+                ?? FirasErrorText.generic(english: english)
+        case .transport(let code, _):
+            return FirasErrorText.connection(code: code, english: english)
+        case .invalidRequest(let code):
+            return FirasErrorText.text(code: code, english: english) ?? FirasErrorText.generic(english: english)
+        case .invalidResponse, .decoding:
+            return FirasErrorText.unexpectedResponse(english: english)
+        case .invalidURL, .encoding, .skillValidation:
+            return FirasErrorText.generic(english: english)
         }
-        return error.localizedDescription
+    }
+
+    /// A failed job's record may be `{"error": code, "message": notice}`. Its
+    /// notice or its code's text is shown in the build's language, never the
+    /// raw record.
+    private func readableBuildError(_ value: String?, language: AppLanguage) -> String {
+        let english = language == .english
+        var code = value
+        var notice: String?
+        if let value, value.first == "{", let data = value.data(using: .utf8),
+           let object = try? JSONDecoder().decode([String: AppAPIValue].self, from: data) {
+            code = nil
+            if case .string(let saved)? = object["error"] { code = saved }
+            if case .string(let saved)? = object["message"] { notice = saved }
+        }
+        return FirasErrorText.text(code: code, notice: notice, english: english)
+            ?? (english ? "The build did not finish. Try again." : "لم يكتمل البناء. أعد المحاولة.")
     }
 
     private static func blankFiles(projectName: String, language: AppLanguage) -> [CodeFile] {

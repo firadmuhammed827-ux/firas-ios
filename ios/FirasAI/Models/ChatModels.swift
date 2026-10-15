@@ -617,3 +617,142 @@ nonisolated struct WebSearchResponse: Decodable, Equatable, Sendable {
     let results: [WebSearchResult]
     let via: String
 }
+
+/// One short sentence for a failure, in the reader's language, naming the
+/// next step where there is one. It takes only what a failure carries (an
+/// HTTP status, a server code or fixed phrase, a URLError code, the server's
+/// own notice), so any store can map its errors through it. A raw code or a
+/// server body is never returned.
+nonisolated enum FirasErrorText {
+    /// The server's notice when it reads as a sentence in the reader's
+    /// language; otherwise the text for its code, then for its HTTP status.
+    /// Nil when none of them is known; the caller picks its own fallback.
+    static func text(status: Int? = nil, code: String?, notice: String? = nil, english: Bool) -> String? {
+        if let notice = readableNotice(notice, english: english) { return notice }
+        if let text = codeText(code, english: english) { return text }
+        guard let status else { return nil }
+        return statusText(status, english: english)
+    }
+
+    /// A request that never got an HTTP answer, by its URLError code.
+    static func connection(code: Int, english: Bool) -> String {
+        switch code {
+        case URLError.Code.timedOut.rawValue:
+            return english ? "The connection to the server timed out. Check your connection, then try again."
+                : "انتهت مهلة الاتصال بالخادم. تحقّق من اتصالك ثم أعد المحاولة."
+        case URLError.Code.notConnectedToInternet.rawValue, URLError.Code.networkConnectionLost.rawValue,
+             URLError.Code.dataNotAllowed.rawValue, URLError.Code.internationalRoamingOff.rawValue:
+            return english ? "There is no internet connection. Check your connection, then try again."
+                : "لا يتوفر اتصال بالإنترنت. تحقّق من اتصالك ثم أعد المحاولة."
+        default:
+            return english ? "The server could not be reached. Check your connection, then try again."
+                : "تعذّر الوصول إلى الخادم. تحقّق من اتصالك ثم أعد المحاولة."
+        }
+    }
+
+    static func unexpectedResponse(english: Bool) -> String {
+        english ? "The server sent an unexpected response. Try again shortly."
+            : "وصل ردّ غير متوقع من الخادم. أعد المحاولة بعد قليل."
+    }
+
+    static func generic(english: Bool) -> String {
+        english ? "The request could not be completed. Try again." : "تعذّر إكمال الطلب. أعد المحاولة."
+    }
+
+    static func answerFailed(english: Bool) -> String {
+        english ? "The answer could not be completed. Try again." : "تعذّر إكمال الإجابة. أعد المحاولة."
+    }
+
+    static func stopped(english: Bool) -> String {
+        english ? "The answer was stopped." : "تم إيقاف الإجابة."
+    }
+
+    /// Only a sentence in the reader's script, never JSON, markup or a code.
+    private static func readableNotice(_ notice: String?, english: Bool) -> String? {
+        guard let clean = notice?.trimmingCharacters(in: .whitespacesAndNewlines),
+              (1...400).contains(clean.count), clean.contains(" "),
+              !clean.contains("{"), !clean.contains("<") else { return nil }
+        let arabic = clean.unicodeScalars.contains { (0x0600...0x06FF).contains($0.value) }
+        return arabic != english ? clean : nil
+    }
+
+    /// The server's codes and its few fixed English phrases.
+    private static func codeText(_ code: String?, english: Bool) -> String? {
+        guard let key = code?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else { return nil }
+        switch key {
+        case "cancelled", "canceled":
+            return stopped(english: english)
+        case "daily quota reached", "daily_quota_reached", "daily_limit":
+            return english ? "You have reached today's usage limit. You can continue tomorrow."
+                : "وصلت إلى حدّ الاستخدام اليومي. يمكنك المتابعة غداً."
+        case "guest daily limit reached", "guest_daily_limit_reached":
+            return english ? "You have reached today's guest limit. Sign in to continue."
+                : "وصلت إلى حدّ الاستخدام اليومي للضيف. سجّل الدخول للمتابعة."
+        case "too many requests", "too_many_requests", "rate limited", "rate_limited", "rate_window", "rate",
+             "too many attempts, please wait a minute", "too many requests, wait a minute":
+            return english ? "Too many requests in a short time. Wait a minute, then try again."
+                : "طلبات كثيرة خلال وقت قصير. انتظر دقيقة ثم أعد المحاولة."
+        case "authentication required", "authentication_required", "not authenticated", "auth required",
+             "signin_required", "media_session_required", "chat_job_session_required":
+            return english ? "Your session has ended. Sign in again, then try again."
+                : "انتهت الجلسة. سجّل الدخول مجدداً ثم أعد المحاولة."
+        case "account_required":
+            return english ? "This feature needs an account. Sign in to continue."
+                : "تحتاج هذه الميزة إلى حساب. سجّل الدخول للمتابعة."
+        case "invalid email or password":
+            return english ? "The email or password is incorrect. Check them, then try again."
+                : "البريد الإلكتروني أو كلمة المرور غير صحيحة. تحقّق منهما ثم أعد المحاولة."
+        case "payload_too_large", "media_history_too_large", "longfile_source_too_large", "too_large":
+            return english ? "The request or file is too large. Make it smaller or split it, then try again."
+                : "الطلب أو الملف كبير جداً. صغّر حجمه أو قسّمه ثم أعد المحاولة."
+        case "selected_model_unavailable", "omnix_unavailable", "invalid_tier", "invalid_mgen":
+            return english ? "The selected model is not available right now. Try again shortly or choose another model."
+                : "النموذج المحدد غير متاح الآن. أعد المحاولة بعد قليل أو اختر نموذجاً آخر."
+        case "selected_model_incomplete":
+            return english ? "The answer did not finish; the available text was kept. Ask to continue to complete it."
+                : "لم تكتمل الإجابة، واحتُفظ بالنص المتاح. اطلب المتابعة لإكمالها."
+        case "selected_outcome_unknown":
+            return english ? "The answer could not be confirmed as complete. The request was not sent again."
+                : "تعذّر تأكيد اكتمال الإجابة، ولم يُرسل الطلب مرة أخرى."
+        case "storage_unavailable", "internal error":
+            return statusText(503, english: english)
+        case "forbidden", "not yours":
+            return statusText(403, english: english)
+        case "not found":
+            return statusText(404, english: english)
+        default:
+            return nil
+        }
+    }
+
+    private static func statusText(_ status: Int, english: Bool) -> String? {
+        switch status {
+        case 400, 422:
+            return english ? "This request could not be accepted. Edit it, then try again."
+                : "تعذّر قبول هذا الطلب. عدّله ثم أعد المحاولة."
+        case 401:
+            return codeText("authentication_required", english: english)
+        case 403:
+            return english ? "This account cannot do this. Check which account you are signed in with."
+                : "لا يملك هذا الحساب صلاحية هذا الإجراء. تحقّق من الحساب الذي سجّلت الدخول به."
+        case 404:
+            return english ? "It was not found and may have been deleted. Refresh, then try again."
+                : "لم يُعثر على المطلوب، وربما حُذف. حدّث القائمة ثم أعد المحاولة."
+        case 408:
+            return connection(code: URLError.Code.timedOut.rawValue, english: english)
+        case 409:
+            return english ? "Another change is in progress. Wait a moment, then try again."
+                : "يجري تغيير آخر الآن. انتظر لحظة ثم أعد المحاولة."
+        case 413:
+            return codeText("payload_too_large", english: english)
+        case 429:
+            return english ? "A usage or request limit was reached. Wait a little, then try again."
+                : "وصلت إلى حدّ الاستخدام أو كثرت الطلبات. انتظر قليلاً ثم أعد المحاولة."
+        case 500...599:
+            return english ? "The server is busy right now. Try again in a minute."
+                : "الخادم مشغول الآن. أعد المحاولة بعد دقيقة."
+        default:
+            return nil
+        }
+    }
+}

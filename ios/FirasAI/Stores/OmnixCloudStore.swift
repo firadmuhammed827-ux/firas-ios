@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-nonisolated enum OmnixCloudFailure: Equatable, Sendable { case refresh, uncertain, rejected, files }
+nonisolated enum OmnixCloudFailure: Equatable, Sendable { case refresh, uncertain, rejected, files, notSent, notReceived }
 
 @MainActor
 @Observable
@@ -78,18 +78,53 @@ final class OmnixCloudStore {
             guard ticket == generation, ownerID == owner else { return }
             cloud = value
             guard value.canRun else { approvalFresh = false; return }
-            if let latest = value.latest(for: product) {
-                // An older task is not a receipt for an uncertain new submission.
-                if uncertain, pointer?.jobId == nil, pointer?.requestKey != latest.requestKey {
-                    failure = .uncertain
-                } else { pointer = latest.pointer; uncertain = false; savePointer() }
-            }
+            adoptLatest(from: value)
             await poll()
             await refreshFiles()
         } catch {
             guard ticket == generation else { return }
             cloud = nil; recordFailure(error, fallback: .refresh)
         }
+    }
+
+    /// Reads the status again while a receipt is unconfirmed, so an open sheet
+    /// settles without a tap. Unlike refresh it shows no busy state, so the
+    /// draft stays editable. A failed read proves nothing; the next one retries.
+    func recheckReceipt() async {
+        guard let owner = ownerID, uncertain, !isWorking else { return }
+        let ticket = generation
+        guard let value = try? await api.omnixCloudStatus(),
+              ticket == generation, ownerID == owner, uncertain, !isWorking else { return }
+        cloud = value
+        guard value.canRun else { return }
+        adoptLatest(from: value)
+        if !uncertain { await poll() }
+    }
+
+    private func adoptLatest(from value: OmnixCloudStatus) {
+        if let latest = value.latest(for: product) {
+            // An older task is not a receipt for an uncertain new submission.
+            if uncertain, pointer?.jobId == nil, pointer?.requestKey != latest.requestKey {
+                noteUnknownReceipt()
+            } else { pointer = latest.pointer; uncertain = false; savePointer() }
+        } else if uncertain, pointer?.jobId == nil {
+            noteUnknownReceipt()
+        }
+    }
+
+    /// A readable status that does not list the uncertain request. Once the
+    /// window of such answers has passed, the request never arrived: the
+    /// pointer lets it go, Start returns and the reader is told why.
+    private func noteUnknownReceipt() {
+        guard let current = pointer else { return }
+        let next = OmnixCloudPolicy.afterUnknownReceipt(current, answeredAt: Date())
+        pointer = next; savePointer()
+        if next.requestKey == nil { uncertain = false; failure = .notReceived } else { failure = .uncertain }
+    }
+
+    private func neverSent(_ error: Error) -> Bool {
+        guard let apiError = error as? APIError, case .transport(let code, _) = apiError else { return false }
+        return OmnixCloudPolicy.unsentTransportCodes.contains(code)
     }
 
     func poll() async {
@@ -124,9 +159,17 @@ final class OmnixCloudStore {
             try accept(value); await poll(); return true
         } catch {
             guard ticket == generation else { return false }
-            if let status = (error as? APIError)?.statusCode, [400, 409, 413, 429].contains(status) {
+            let status = (error as? APIError)?.statusCode
+            if let status, [400, 409, 413, 429].contains(status) {
                 uncertain = false; failure = .rejected
                 pointer = OmnixCloudPointer(jobId: job?.jobId, sessionId: request.sessionId, requestKey: nil); savePointer()
+            } else if status == 404 || neverSent(error) {
+                // Never sent, or refused before admission (a session or workspace
+                // the server no longer has, so the session is not reused): no
+                // receipt can appear. The draft stays for an explicit resend.
+                uncertain = false; failure = status == 404 ? .notReceived : .notSent
+                pointer = OmnixCloudPointer(jobId: job?.jobId, sessionId: status == 404 ? nil : request.sessionId, requestKey: nil)
+                savePointer()
             } else { recordFailure(error, fallback: .uncertain) }
             return false
         }

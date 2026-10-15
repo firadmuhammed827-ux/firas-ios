@@ -32,6 +32,32 @@ struct OmnixCloudPolicyTests {
         let pointer = OmnixCloudPointer(jobId: job, sessionId: session, requestKey: key)
         let encodedPointer = try JSONSerialization.jsonObject(with: JSONEncoder().encode(pointer)) as! [String: Any]
         expect(Set(encodedPointer.keys) == Set(["jobId", "sessionId", "requestKey"]), "pointers never persist prompts or output")
+        // STORE-4: an unconfirmed submission is bounded. Unknown answers start a
+        // window that survives relaunch in the pointer; once it has passed the
+        // request is let go and Start returns. Only an unsent request fails at once.
+        let uncertain = OmnixCloudPointer(jobId: nil, sessionId: session, requestKey: key)
+        let firstUnknown = Date(timeIntervalSince1970: 1_000_000)
+        let waiting = OmnixCloudPolicy.afterUnknownReceipt(uncertain, answeredAt: firstUnknown)
+        expect(waiting.requestKey == key && waiting.receiptUnknownSince == firstUnknown, "the first unknown answer starts the window and keeps the request")
+        let storedWaiting = try JSONSerialization.jsonObject(with: JSONEncoder().encode(waiting)) as! [String: Any]
+        expect(Set(storedWaiting.keys) == Set(["sessionId", "requestKey", "receiptUnknownSince"]), "the window adds only a time to the stored identifiers")
+        let relaunched = try JSONDecoder().decode(OmnixCloudPointer.self, from: JSONEncoder().encode(waiting))
+        expect(relaunched == waiting, "the window start survives relaunch")
+        let inside = OmnixCloudPolicy.afterUnknownReceipt(relaunched, answeredAt: firstUnknown.addingTimeInterval(179))
+        expect(inside.requestKey == key && inside.receiptUnknownSince == firstUnknown, "an unknown answer inside the window neither clears nor extends it")
+        let settled = OmnixCloudPolicy.afterUnknownReceipt(inside, answeredAt: firstUnknown.addingTimeInterval(OmnixCloudPolicy.unknownReceiptWindow))
+        expect(settled.requestKey == nil && settled.jobId == nil && settled.sessionId == session && settled.receiptUnknownSince == nil,
+               "after the window the request is let go and the session is kept")
+        let rewound = OmnixCloudPolicy.afterUnknownReceipt(waiting, answeredAt: firstUnknown.addingTimeInterval(-600))
+        expect(rewound.requestKey == key && rewound.receiptUnknownSince == firstUnknown.addingTimeInterval(-600),
+               "a clock moved backwards restarts the window instead of extending it")
+        expect(OmnixCloudPolicy.afterUnknownReceipt(pointer, answeredAt: firstUnknown) == pointer, "a pointer with a job id is not a pending receipt")
+        let legacy = try JSONDecoder().decode(OmnixCloudPointer.self, from: Data("{\"sessionId\":\"\(session)\",\"requestKey\":\"\(key)\"}".utf8))
+        expect(legacy.requestKey == key && legacy.receiptUnknownSince == nil, "pointers stored by earlier versions decode unchanged")
+        expect(OmnixCloudPolicy.unsentTransportCodes.contains(URLError.Code.notConnectedToInternet.rawValue)
+               && OmnixCloudPolicy.unsentTransportCodes.contains(URLError.Code.cannotConnectToHost.rawValue), "offline proves the request never left")
+        expect(!OmnixCloudPolicy.unsentTransportCodes.contains(URLError.Code.timedOut.rawValue)
+               && !OmnixCloudPolicy.unsentTransportCodes.contains(URLError.Code.networkConnectionLost.rawValue), "a timeout or a lost reply proves nothing")
         let statusJSON = """
         {"state":"ready","ready":true,"latestJob":{"jobId":"\(job)","sessionId":"\(session)","state":"completed","product":"code","requestKey":"\(key)"},"latestJobs":{"ai":{"jobId":"\(job)","sessionId":"\(session)","state":"running","product":"ai","requestKey":"\(key)"}}}
         """

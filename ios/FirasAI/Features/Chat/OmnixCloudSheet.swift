@@ -45,6 +45,8 @@ struct OmnixCloudSheet: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button(ar ? "إغلاق" : "Close") { dismiss() }.frame(minHeight: 44) } }
         }
         .environment(\.layoutDirection, preferences.language.layoutDirection)
+        // A sheet is not guaranteed to inherit the root's text size.
+        .dynamicTypeSize(preferences.resolvedTypeSize)
         .task(id: "\(owner ?? "signed-out"):\(product.rawValue)") {
             if hasBoundOwner, openedOwner != owner { store.invalidate(); draft = ""; dismiss(); return }
             openedOwner = owner; hasBoundOwner = true
@@ -52,9 +54,17 @@ struct OmnixCloudSheet: View {
             draft = initialDraft // A draft only. Never submit or persist it automatically.
             guard owner != nil else { return }
             await store.refresh()
+            var ticks = 0
             while !Task.isCancelled, store.ownerID == owner {
                 do { try await Task.sleep(for: .seconds(2.5)) } catch { break }
-                if store.hasLiveJob, !store.isWorking { await store.poll() }
+                ticks &+= 1
+                // An unconfirmed receipt is read again every 15 s, so the server's
+                // answer, or its lasting silence, settles it without a tap.
+                if store.hasLiveJob, !store.isWorking {
+                    await store.poll()
+                } else if store.uncertain, ticks % 6 == 0 {
+                    await store.recheckReceipt()
+                }
             }
         }
         .onChange(of: owner) { old, new in
@@ -77,6 +87,10 @@ struct OmnixCloudSheet: View {
                 }
                 .frame(minHeight: 44)
                 .disabled(!store.isReady || store.isWorking || store.uncertain || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || draft.utf16.count > 60_000)
+                if store.uncertain {
+                    Text(verbatim: ar ? "يبقى البدء متوقفًا حتى يؤكد الخادم استلام طلبك المُرسَل. إن لم يجد له سجلًّا خلال نحو ثلاث دقائق، يعود البدء متاحًا." : "Start stays unavailable until the server confirms it received your request. If it finds no record of it within about three minutes, Start becomes available again.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
             }
             Button(ar ? "تحديث الحالة" : "Refresh status") { Task { await store.refresh() } }
                 .frame(minHeight: 44).disabled(store.isWorking)
@@ -164,6 +178,8 @@ struct OmnixCloudSheet: View {
         case .rejected: return ar ? "لم يُقبل بدء المهمة. قد توجد مهمة أخرى قيد التنفيذ؛ حدّث الحالة." : "The task could not be started. Another task may be running; refresh the status."
         case .files: return ar ? "تعذّر تحميل الملف أو قائمة الملفات." : "Could not load the file or file list."
         case .refresh: return ar ? "تعذّر تأكيد الحالة. حدّثها قبل اتخاذ إجراء آخر." : "Could not confirm the status. Refresh before taking another action."
+        case .notSent: return ar ? "لم يُرسَل الطلب لعدم توفّر الاتصال، ولم تُنشأ أي مهمة. أعد المحاولة عند عودة الاتصال." : "The request was not sent because there is no connection, and no task was created. Try again once you are back online."
+        case .notReceived: return ar ? "لا يوجد لدى الخادم سجلّ لهذا الطلب، فلم يبدأ تنفيذه. يمكنك بدء المهمة من جديد." : "The server has no record of this request, so it did not start. You can start the task again."
         }
     }
 }
@@ -191,7 +207,10 @@ private struct OmnixObservedStepRow: View {
                 Image(systemName: step.s == "done" ? "checkmark.circle" : step.s == "fail" ? "exclamationmark.circle" : "circle")
                     .accessibilityHidden(true)
                 VStack(alignment: .leading) {
-                    Text(verbatim: step.title).environment(\.layoutDirection, .leftToRight)
+                    // A step title is the worker's own text, in whichever script it
+                    // wrote; one with no letters stays left to right, as before.
+                    Text(verbatim: step.title)
+                        .environment(\.layoutDirection, LayoutDirection.ofContent(step.title, fallback: .leftToRight))
                     Text(verbatim: status).font(.caption).foregroundStyle(.secondary)
                 }
             }.frame(minHeight: 44)

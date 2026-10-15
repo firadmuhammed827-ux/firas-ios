@@ -47,6 +47,9 @@ struct FirasBrandMark: View {
                 .tracking(-0.5)
             }
         }
+        // The lockup is a fixed picture of the name: in Arabic it would
+        // otherwise read "AI Firas" with the mark on the far side.
+        .environment(\.layoutDirection, .leftToRight)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("app.name")
     }

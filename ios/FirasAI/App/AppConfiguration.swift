@@ -24,4 +24,8 @@ struct AppConfiguration: Sendable {
         return AppConfiguration(apiBaseURL: url)
     }()
 
+    // The published legal pages. Fixed to the public site, so a development
+    // build pointed at another API still links the real policy and terms.
+    static let privacyPolicyURL = URL(string: "https://firasai.org/privacy")!
+    static let termsURL = URL(string: "https://firasai.org/terms")!
 }

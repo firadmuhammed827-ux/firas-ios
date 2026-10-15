@@ -8,25 +8,13 @@ import UIKit
 
 private enum RecentPhotoAccessState {
     case loading
+    /// The library has never been asked. Opening the sheet must not ask: the
+    /// system picker needs no access, so only the reader's tap on the
+    /// recent-photos tile raises the prompt.
+    case notRequested
     case available
     case denied
     case configurationMissing
-}
-
-private enum DictationLanguage: String, CaseIterable, Identifiable {
-    case automatic
-    case arabic
-    case english
-
-    var id: String { rawValue }
-
-    var title: LocalizedStringResource {
-        switch self {
-        case .automatic: ChatStrings.contextDictationAutomatic
-        case .arabic: ChatStrings.contextDictationArabic
-        case .english: ChatStrings.contextDictationEnglish
-        }
-    }
 }
 
 struct AddContextSheet: View {
@@ -39,8 +27,8 @@ struct AddContextSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
 
-    @AppStorage("dictationLanguage") private var dictationLanguageRaw = DictationLanguage.automatic.rawValue
     @State private var photoPickerItems: [PhotosPickerItem] = []
     @State private var recentAssets: [PHAsset] = []
     @State private var recentPhotoAccess: RecentPhotoAccessState = .loading
@@ -48,7 +36,6 @@ struct AddContextSheet: View {
     @State private var showsCamera = false
     @State private var notice: LocalizedStringResource?
     @State private var contentVisible = false
-    @State private var pickerImportGeneration = UUID()
 
     var body: some View {
         @Bindable var preferences = preferences
@@ -86,6 +73,7 @@ struct AddContextSheet: View {
                                     }
                                     .padding(.horizontal, 14)
                                     .frame(minHeight: 58)
+                                    .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
 
@@ -109,6 +97,7 @@ struct AddContextSheet: View {
                                     }
                                     .padding(.horizontal, 14)
                                     .frame(minHeight: 58)
+                                    .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
 
@@ -137,10 +126,6 @@ struct AddContextSheet: View {
                                 .tint(preferences.palette.accent)
                                 .frame(minHeight: 58)
                                 .padding(.horizontal, 14)
-
-                                ContextDivider()
-
-                                dictationLanguageRow
                             }
                         }
 
@@ -197,7 +182,9 @@ struct AddContextSheet: View {
         .presentationCornerRadius(34)
         .presentationBackground(preferences.palette.background)
         .presentationContentInteraction(.scrolls)
-        .environment(\.layoutDirection, .leftToRight)
+        .environment(\.layoutDirection, preferences.language.layoutDirection)
+        // A sheet is not guaranteed to inherit the root's text size.
+        .dynamicTypeSize(preferences.resolvedTypeSize)
         .fileImporter(
             isPresented: $showsFileImporter,
             allowedContentTypes: [.item],
@@ -215,6 +202,11 @@ struct AddContextSheet: View {
         }
         .task {
             await loadRecentPhotos()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            // Access granted in Settings while the sheet stayed open.
+            guard phase == .active else { return }
+            Task { await loadRecentPhotos() }
         }
         .task {
             await Task.yield()
@@ -248,6 +240,15 @@ struct AddContextSheet: View {
                     ForEach(0 ..< 3, id: \.self) { _ in
                         ContextPhotoPlaceholder()
                     }
+                case .notRequested:
+                    Button(action: requestRecentPhotos) {
+                        ContextPhotoActionTile(
+                            title: ChatStrings.contextShowRecentPhotos,
+                            systemImage: "photo.stack"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(Text(ChatStrings.contextShowRecentPhotos))
                 case .available:
                     if recentAssets.isEmpty {
                         ContextPhotoStatusTile(
@@ -260,6 +261,7 @@ struct AddContextSheet: View {
                                 asset: asset,
                                 index: index,
                                 isSelected: selection.recentPhotoIDs.contains(asset.localIdentifier)
+                                    || selection.pickerPhotoIDs.contains(asset.localIdentifier)
                             ) {
                                 toggleRecentPhoto(asset)
                             }
@@ -280,23 +282,47 @@ struct AddContextSheet: View {
                     )
                 }
 
-                PhotosPicker(
-                    selection: $photoPickerItems,
-                    maxSelectionCount: 10,
-                    matching: .images
-                ) {
-                    ContextPhotoActionTile(
-                        title: allPhotosTitle,
-                        systemImage: "photo.on.rectangle.angled"
-                    )
+                if remainingImageSlots > 0 {
+                    // With the shared library the picker reports each photo's
+                    // identifier, so a photo picked again, or already chosen in
+                    // the recent strip, is attached once. It still needs no
+                    // library access: the picker runs outside the app.
+                    PhotosPicker(
+                        selection: $photoPickerItems,
+                        maxSelectionCount: remainingImageSlots,
+                        matching: .images,
+                        photoLibrary: .shared()
+                    ) {
+                        ContextPhotoActionTile(
+                            title: allPhotosTitle,
+                            systemImage: "photo.on.rectangle.angled"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(Text(allPhotosTitle))
+                } else {
+                    Button {
+                        notice = ChatStrings.contextImageLimit
+                    } label: {
+                        ContextPhotoActionTile(
+                            title: allPhotosTitle,
+                            systemImage: "photo.on.rectangle.angled"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(Text(allPhotosTitle))
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Text(allPhotosTitle))
             }
             .padding(.vertical, 2)
         }
         .scrollClipDisabled()
-        .environment(\.layoutDirection, .leftToRight)
+    }
+
+    /// Room left under the ten-photo cap, counting photos still being
+    /// prepared. Files have their own cap and never take a photo's place.
+    private var remainingImageSlots: Int {
+        let preparingImages = selection.processingItemIDs.filter { !$0.hasPrefix("file:") }.count
+        return max(0, 10 - selection.images.count - preparingImages)
     }
 
     private var filesSection: some View {
@@ -387,55 +413,6 @@ struct AddContextSheet: View {
         .accessibilityLabel(Text(title))
     }
 
-    private var dictationLanguageRow: some View {
-        HStack(spacing: 13) {
-            ContextControlLabel(
-                title: ChatStrings.contextDictationLanguage,
-                detail: ChatStrings.contextDictationDetail,
-                systemImage: "waveform"
-            )
-
-            Spacer(minLength: 10)
-
-            Menu {
-                ForEach(DictationLanguage.allCases) { language in
-                    Button {
-                        dictationLanguageRaw = language.rawValue
-                    } label: {
-                        if language == dictationLanguage {
-                            Label {
-                                Text(language.title)
-                            } icon: {
-                                Image(systemName: "checkmark")
-                            }
-                        } else {
-                            Text(language.title)
-                        }
-                    }
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Text(dictationLanguage.title)
-                        .font(.subheadline.weight(.semibold))
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.caption2.weight(.bold))
-                        .accessibilityHidden(true)
-                }
-                .foregroundStyle(preferences.palette.textSecondary)
-                .padding(.horizontal, 9)
-                .frame(minHeight: 44)
-            }
-            .accessibilityLabel(Text(ChatStrings.contextDictationLanguage))
-            .accessibilityValue(Text(dictationLanguage.title))
-        }
-        .padding(.horizontal, 14)
-        .frame(minHeight: 58)
-    }
-
-    private var dictationLanguage: DictationLanguage {
-        DictationLanguage(rawValue: dictationLanguageRaw) ?? .automatic
-    }
-
     private func requestCamera() {
         notice = nil
 
@@ -466,7 +443,14 @@ struct AddContextSheet: View {
         }
     }
 
-    private func loadRecentPhotos() async {
+    private func requestRecentPhotos() {
+        notice = nil
+        Task { await loadRecentPhotos(requestingAccess: true) }
+    }
+
+    /// Reads the recent strip only when access already exists. The prompt is
+    /// raised solely by `requestRecentPhotos`, never by opening the sheet.
+    private func loadRecentPhotos(requestingAccess: Bool = false) async {
         guard Bundle.main.object(forInfoDictionaryKey: "NSPhotoLibraryUsageDescription") != nil else {
             recentPhotoAccess = .configurationMissing
             return
@@ -474,7 +458,7 @@ struct AddContextSheet: View {
 
         let currentStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
         let status: PHAuthorizationStatus
-        if currentStatus == .notDetermined {
+        if currentStatus == .notDetermined, requestingAccess {
             status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
         } else {
             status = currentStatus
@@ -496,7 +480,7 @@ struct AddContextSheet: View {
         case .denied, .restricted:
             recentPhotoAccess = .denied
         case .notDetermined:
-            recentPhotoAccess = .loading
+            recentPhotoAccess = .notRequested
         @unknown default:
             recentPhotoAccess = .denied
         }
@@ -522,14 +506,17 @@ struct AddContextSheet: View {
     private func toggleRecentPhoto(_ asset: PHAsset) {
         let identifier = asset.localIdentifier
         let sourceID = "recent:\(identifier)"
+        // The same library photo may already be attached from the full picker.
+        if selection.pickerPhotoIDs.contains(identifier) {
+            selection.removeComposerAttachment("picker:\(identifier)")
+            return
+        }
         if selection.recentPhotoIDs.contains(identifier) {
-            selection.recentPhotoIDs.remove(identifier)
-            selection.images.removeAll { $0.sourceID == sourceID }
-            selection.processingItemIDs.remove(sourceID)
+            selection.removeComposerAttachment(sourceID)
             return
         }
 
-        guard selection.images.count + selection.processingItemIDs.count < 10 else {
+        guard remainingImageSlots > 0 else {
             notice = ChatStrings.contextImageLimit
             return
         }
@@ -557,24 +544,27 @@ struct AddContextSheet: View {
         }
     }
 
+    /// Each trip to the picker adds to what is already attached. The picker's
+    /// own selection is emptied afterwards, so the next trip starts clean and
+    /// that emptying is not mistaken for a new pick.
     private func importPickerItems(_ items: [PhotosPickerItem]) {
-        let generation = UUID()
-        pickerImportGeneration = generation
+        guard !items.isEmpty else { return }
+        photoPickerItems = []
 
-        let descriptors = items.prefix(10).enumerated().map { index, item in
-            (
-                item,
-                item.itemIdentifier ?? "local-\(index)-\(generation.uuidString)"
-            )
-        }
-        selection.pickerPhotoIDs = descriptors.map { $0.1 }
-        selection.images.removeAll { $0.sourceID.hasPrefix("picker:") }
-        selection.processingItemIDs = Set(
-            selection.processingItemIDs.filter { !$0.hasPrefix("picker:") }
-        )
+        var slots = remainingImageSlots
+        for item in items {
+            let identifier = item.itemIdentifier ?? "local-\(UUID().uuidString)"
+            guard !selection.pickerPhotoIDs.contains(identifier),
+                  !selection.recentPhotoIDs.contains(identifier)
+            else { continue }
+            guard slots > 0 else {
+                notice = ChatStrings.contextImageLimit
+                break
+            }
+            slots -= 1
 
-        for (item, identifier) in descriptors {
             let sourceID = "picker:\(identifier)"
+            selection.pickerPhotoIDs.append(identifier)
             selection.processingItemIDs.insert(sourceID)
             Task {
                 do {
@@ -585,12 +575,14 @@ struct AddContextSheet: View {
                         data: data,
                         sourceID: sourceID
                     )
-                    guard pickerImportGeneration == generation,
+                    // Removed or cleared while it was being prepared.
+                    guard selection.processingItemIDs.contains(sourceID),
                           selection.pickerPhotoIDs.contains(identifier)
                     else { return }
+                    selection.images.removeAll { $0.sourceID == sourceID }
                     selection.images.append(prepared)
                 } catch {
-                    guard pickerImportGeneration == generation else { return }
+                    guard selection.processingItemIDs.contains(sourceID) else { return }
                     selection.pickerPhotoIDs.removeAll { $0 == identifier }
                     notice = ChatStrings.contextImageImportFailed
                 }
@@ -600,7 +592,7 @@ struct AddContextSheet: View {
     }
 
     private func importCameraImage(_ image: UIImage) {
-        guard selection.images.count + selection.processingItemIDs.count < 10 else {
+        guard remainingImageSlots > 0 else {
             notice = ChatStrings.contextImageLimit
             return
         }
@@ -641,7 +633,7 @@ struct AddContextSheet: View {
         for url in urls.prefix(remainingSlots) {
             let name = String(url.lastPathComponent.prefix(120))
             guard !selection.fileNames.contains(name) else { continue }
-            let sourceID = "file:\(UUID().uuidString)"
+            let sourceID = DraftContextSelection.fileProcessingID(name: name)
             selection.fileNames.append(name)
             selection.processingItemIDs.insert(sourceID)
 
@@ -700,7 +692,6 @@ private struct ContextSectionHeading: View {
             .textCase(.uppercase)
             .foregroundStyle(preferences.palette.textMuted)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .environment(\.layoutDirection, .leftToRight)
     }
 }
 
@@ -932,26 +923,19 @@ private struct ContextControlLabel: View {
             ContextIcon(systemImage: systemImage)
             ContextTextColumn(title: title, detail: detail)
         }
-        .environment(\.layoutDirection, .leftToRight)
     }
 }
 
+/// Leading follows the sheet's layout direction, so Arabic rows read from the
+/// right edge next to their icon and English rows from the left.
 private struct ContextTextColumn: View {
     let title: LocalizedStringResource
     let detail: LocalizedStringResource
 
     @Environment(PreferencesStore.self) private var preferences
 
-    private var alignment: HorizontalAlignment {
-        preferences.language == .arabic ? .trailing : .leading
-    }
-
-    private var frameAlignment: Alignment {
-        preferences.language == .arabic ? .trailing : .leading
-    }
-
     var body: some View {
-        VStack(alignment: alignment, spacing: 3) {
+        VStack(alignment: .leading, spacing: 3) {
             Text(title)
                 .font(.body.weight(.semibold))
                 .foregroundStyle(preferences.palette.textPrimary)
@@ -961,9 +945,8 @@ private struct ContextTextColumn: View {
                 .foregroundStyle(preferences.palette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(maxWidth: .infinity, alignment: frameAlignment)
-        .multilineTextAlignment(preferences.language == .arabic ? .trailing : .leading)
-        .environment(\.layoutDirection, preferences.language.layoutDirection)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .multilineTextAlignment(.leading)
     }
 }
 
@@ -1101,6 +1084,72 @@ private struct CameraCaptureView: UIViewControllerRepresentable {
 
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
             isPresented.wrappedValue = false
+        }
+    }
+}
+
+/// The composer's view of this sheet's selection. The ids follow the source
+/// ids written above (`recent:`, `picker:`, `camera:`), and a file by its name,
+/// so removing one item here keeps every count and late preparation in step.
+extension DraftContextSelection {
+    /// A file's preparation id carries its name after the first "/", so a file
+    /// removed while it is still being read cannot return when the read ends.
+    static func fileProcessingID(name: String) -> String {
+        "file:\(UUID().uuidString)/\(name)"
+    }
+
+    private static func fileName(inProcessingID id: String) -> String? {
+        guard id.hasPrefix("file:"), let slash = id.firstIndex(of: "/") else { return nil }
+        return String(id[id.index(after: slash)...])
+    }
+
+    /// Prepared photos first, then photos still being prepared, then files.
+    var composerAttachments: [ComposerAttachment] {
+        var attachments: [ComposerAttachment] = images.map {
+            ComposerAttachment(id: $0.sourceID, kind: .image, name: "", imageData: $0.jpegData, isProcessing: false)
+        }
+        let prepared = Set(images.map(\.sourceID))
+        let preparing: [String] = pickerPhotoIDs.map { "picker:\($0)" }
+            + recentPhotoIDs.sorted().map { "recent:\($0)" }
+            + processingItemIDs.filter { $0.hasPrefix("camera:") }.sorted()
+        for sourceID in preparing where !prepared.contains(sourceID) {
+            attachments.append(
+                ComposerAttachment(id: sourceID, kind: .image, name: "", imageData: nil, isProcessing: true)
+            )
+        }
+        for name in fileNames {
+            attachments.append(ComposerAttachment(
+                id: "file:\(name)",
+                kind: .file,
+                name: name,
+                imageData: nil,
+                isProcessing: !files.contains { $0.name == name }
+            ))
+        }
+        return attachments
+    }
+
+    /// Removes one item by its `composerAttachments` id and retires its
+    /// preparation, so a result that lands later is dropped, not attached.
+    mutating func removeComposerAttachment(_ id: String) {
+        if id.hasPrefix("file:") {
+            let name = String(id.dropFirst("file:".count))
+            fileNames.removeAll { $0 == name }
+            files.removeAll { $0.name == name }
+            processingItemIDs = processingItemIDs.filter { Self.fileName(inProcessingID: $0) != name }
+            return
+        }
+
+        let wasPresent = images.contains { $0.sourceID == id } || processingItemIDs.contains(id)
+        images.removeAll { $0.sourceID == id }
+        processingItemIDs.remove(id)
+        if id.hasPrefix("picker:") {
+            let identifier = String(id.dropFirst("picker:".count))
+            pickerPhotoIDs.removeAll { $0 == identifier }
+        } else if id.hasPrefix("recent:") {
+            recentPhotoIDs.remove(String(id.dropFirst("recent:".count)))
+        } else if id.hasPrefix("camera:"), wasPresent {
+            cameraPhotoCount = max(0, cameraPhotoCount - 1)
         }
     }
 }

@@ -1,3 +1,4 @@
+import Accessibility
 import SwiftUI
 
 private enum ChatSheet: Identifiable, Equatable {
@@ -81,6 +82,7 @@ struct ChatScreen: View {
     @Environment(MediaStudioStore.self) private var mediaStudioStore
     @Environment(PromptEngineerStore.self) private var promptEngineerStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var presentedSheet: ChatSheet?
     @State private var notice: ChatNotice?
@@ -135,28 +137,35 @@ struct ChatScreen: View {
                     if promptEngineerStore.hasResult {
                         PromptEngineerStatusControl { presentedSheet = .promptEngineer }
                     }
-                    if chatStore.canForgetUnavailableReceipt, let cid = chatStore.unavailableReceiptCID,
+                    // Any saved answer nothing observes can be re-read; removing
+                    // it from this device needs a receipt the server proved missing.
+                    if chatStore.canReconnectActiveJob, let cid = chatStore.reconnectableReceiptCID,
                        let ownerID = session.identityID {
                         let identityGeneration = session.identityGeneration
+                        let removable = chatStore.canForgetUnavailableReceipt && chatStore.unavailableReceiptCID == cid
                         VStack(spacing: 6) {
-                            Text(LocalizedStringResource("receiptLocalRemovalHint", table: "Chat"))
-                                .font(.caption).foregroundStyle(.secondary)
+                            if removable {
+                                Text(LocalizedStringResource("receiptLocalRemovalHint", table: "Chat"))
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
                             FirasGlassControlGroup(spacing: 8) {
                                 Button {
                                     Task {
                                         guard session.identityID == ownerID, session.identityGeneration == identityGeneration,
-                                              chatStore.unavailableReceiptCID == cid else { return }
+                                              chatStore.reconnectableReceiptCID == cid else { return }
                                         await chatStore.resumeActiveJob()
                                     }
                                 } label: {
                                     Text(LocalizedStringResource("receiptReconnect", table: "Chat")).frame(minHeight: 44)
                                 }.modifier(FirasGlassControlStyle())
-                                Button {
-                                    chatStore.forgetUnavailableReceipt(cid: cid, expectedOwnerID: ownerID,
-                                        expectedIdentityGeneration: identityGeneration)
-                                } label: {
-                                    Text(LocalizedStringResource("receiptRemoveLocal", table: "Chat")).frame(minHeight: 44)
-                                }.modifier(FirasGlassControlStyle())
+                                if removable {
+                                    Button {
+                                        chatStore.forgetUnavailableReceipt(cid: cid, expectedOwnerID: ownerID,
+                                            expectedIdentityGeneration: identityGeneration)
+                                    } label: {
+                                        Text(LocalizedStringResource("receiptRemoveLocal", table: "Chat")).frame(minHeight: 44)
+                                    }.modifier(FirasGlassControlStyle())
+                                }
                             }
                         }
                     }
@@ -180,7 +189,9 @@ struct ChatScreen: View {
                         onSelectModel: showModelPicker,
                         onSend: send,
                         onStop: stop,
-                        onStartCall: startCallTapped
+                        onStartCall: startCallTapped,
+                        attachments: draftContext.composerAttachments,
+                        onRemoveAttachment: removeAttachment
                     )
                     .environment(\.layoutDirection, preferences.language.layoutDirection)
                 }
@@ -211,8 +222,11 @@ struct ChatScreen: View {
                     onOpenSkills: openSkillsFromContext,
                     onOpenMedia: openMediaStudio
                 )
+            // These three do not re-apply the text size at their own root, and a
+            // sheet is not guaranteed to inherit it, so it is applied here.
             case .skills(let ownerID):
                 ChatSkillsPicker(ownerID: ownerID, selection: $skillSelection)
+                    .dynamicTypeSize(preferences.resolvedTypeSize)
             case .media(let kind, let focusedJobID):
                 MediaStudioScreen(
                     store: mediaStudioStore,
@@ -220,11 +234,13 @@ struct ChatScreen: View {
                     focusedJobID: focusedJobID,
                     onOpenProfile: openProfileFromMediaStudio
                 )
+                .dynamicTypeSize(preferences.resolvedTypeSize)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.hidden)
                 .presentationCornerRadius(34)
             case .promptEngineer:
                 PromptEngineerPanel()
+                    .dynamicTypeSize(preferences.resolvedTypeSize)
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
                     .presentationCornerRadius(34)
@@ -235,6 +251,8 @@ struct ChatScreen: View {
                     onCancel: { cancelDifficulty(request) })
             }
         }
+        .modifier(ChatVoiceOverAnnouncements(outcome: answerOutcome, errorMessage: chatStore.errorMessage,
+                                             notice: notice, language: preferences.language))
         .onChange(of: mediaPresentationRequest, initial: true) { _, request in
             guard let request else { return }
             isComposerFocused = false
@@ -276,6 +294,14 @@ struct ChatScreen: View {
         }
         .onAppear {
             if helperObservationLease == nil { helperObservationLease = promptEngineerStore.acquireObservation() }
+            // Coming back to Chat from another product re-observes as well.
+            Task { await chatStore.resumeAfterActivation() }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            // Coming back re-observes a saved answer nothing is watching.
+            // Leaving never cancels it; only an explicit Stop does.
+            guard phase == .active else { return }
+            Task { await chatStore.resumeAfterActivation() }
         }
         .onChange(of: promptEngineerStore.presentationID, initial: true) { _, id in
             guard let id else { return }
@@ -389,7 +415,7 @@ struct ChatScreen: View {
                 } else {
                     LazyVStack(spacing: 24) {
                         ForEach(chatStore.messages) { message in
-                            ChatMessageRow(message: message)
+                            ChatMessageRow(message: chatStore.displayedMessage(message))
                                 .id(message.id)
                         }
 
@@ -452,7 +478,7 @@ struct ChatScreen: View {
                     .buttonStyle(.plain)
                     .foregroundStyle(preferences.palette.textPrimary)
                     .background(.regularMaterial, in: Circle())
-                    .accessibilityLabel(Text("chat.latestMessage"))
+                    .accessibilityLabel(Text(ChatStrings.latestMessage))
                     .padding(16)
                 }
             }
@@ -513,6 +539,13 @@ struct ChatScreen: View {
         }
     }
 
+    /// The newest answer and its state, which VoiceOver hears settle. Its
+    /// turn id survives the saved copy replacing the local row.
+    private var answerOutcome: ChatAnswerOutcome? {
+        guard let answer = chatStore.messages.last(where: { $0.role == .assistant }) else { return nil }
+        return ChatAnswerOutcome(turn: answer.cid ?? answer.id, state: answer.state)
+    }
+
     private func showModelPicker() {
         notice = nil
         isComposerFocused = false
@@ -552,6 +585,16 @@ struct ChatScreen: View {
     private func removeSkill(_ id: String) {
         guard !chatStore.isSending, !isPreparingContext, let ownerID = session.identityID else { return }
         skillSelection.remove(id: id, expectedOwnerID: ownerID)
+    }
+
+    /// Removes one attached photo or file from the composer. While a Send is
+    /// being prepared the draft is the request, so nothing is removed.
+    private func removeAttachment(_ id: String) {
+        guard !holdsDraftEdits else { return }
+        let binding = draftContextBinding
+        var context = binding.wrappedValue
+        context.removeComposerAttachment(id)
+        binding.wrappedValue = context
     }
 
     private func openMediaStudio(_ kind: MediaStudioKind) {
@@ -950,6 +993,72 @@ private enum ChatScrollAnchor {
     static let bottom = "chat-bottom-anchor"
 }
 
+private struct ChatAnswerOutcome: Equatable {
+    let turn: String
+    let state: ChatMessageState
+}
+
+/// VoiceOver hears an answer settle (finished, stopped, or failed with its
+/// reason) and each new error or notice banner, in the app language. What
+/// lands together is read as one announcement, the outcome first.
+private struct ChatVoiceOverAnnouncements: ViewModifier {
+    let outcome: ChatAnswerOutcome?
+    let errorMessage: String?
+    let notice: ChatNotice?
+    let language: AppLanguage
+
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
+    @State private var pendingOutcome: String? = nil
+    @State private var pendingNotices: [String] = []
+    @State private var announcement: Task<Void, Never>? = nil
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: outcome) { previous, current in
+                guard voiceOverEnabled, let previous, let current, previous.turn == current.turn,
+                      previous.state == .sending else { return }
+                let english = language == .english
+                switch current.state {
+                case .delivered:
+                    announce(outcome: english ? "The answer is complete." : "اكتملت الإجابة.")
+                case .stopped:
+                    announce(outcome: FirasErrorText.stopped(english: english))
+                case .failed:
+                    // The reason is the error banner; it can follow a moment later.
+                    announce(outcome: english ? "The answer could not be completed." : "تعذّر إكمال الإجابة.",
+                             notice: errorMessage, waitingForReason: errorMessage == nil)
+                case .sending:
+                    break
+                }
+            }
+            .onChange(of: errorMessage) { _, message in
+                guard voiceOverEnabled, let message, !message.isEmpty else { return }
+                announce(notice: message)
+            }
+            .onChange(of: notice) { _, notice in
+                guard voiceOverEnabled, let notice else { return }
+                var text = notice.message
+                text.locale = language.locale
+                announce(notice: String(localized: text))
+            }
+    }
+
+    private func announce(outcome: String? = nil, notice: String? = nil, waitingForReason: Bool = false) {
+        if let outcome { pendingOutcome = outcome }
+        if let notice, !notice.isEmpty, !pendingNotices.contains(notice) { pendingNotices.append(notice) }
+        announcement?.cancel()
+        announcement = Task { @MainActor in
+            do { try await Task.sleep(for: .milliseconds(waitingForReason ? 1_500 : 350)) } catch { return }
+            let spoken = ([pendingOutcome].compactMap { $0 } + pendingNotices).joined(separator: " ")
+            pendingOutcome = nil
+            pendingNotices = []
+            announcement = nil
+            guard !spoken.isEmpty else { return }
+            AccessibilityNotification.Announcement(AttributedString(spoken)).post()
+        }
+    }
+}
+
 private struct ChatNavigationTitle: View {
     let title: String?
 
@@ -1038,10 +1147,11 @@ private struct ChatErrorBanner: View {
                 .foregroundStyle(preferences.palette.error)
                 .accessibilityHidden(true)
 
+            // Never cut: the last sentence is usually the next step.
             Text(message)
                 .font(.subheadline)
                 .foregroundStyle(preferences.palette.textPrimary)
-                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             Button(action: dismiss) {

@@ -8,12 +8,18 @@ import Foundation
             precondition(condition(), label)
             checks += 1
         }
+        // Each store gets its own synthetic guest-transcript folder, so no
+        // case reads another case's (or a previous run's) device copy.
+        func guestDirectory() -> URL {
+            FileManager.default.temporaryDirectory
+                .appendingPathComponent("firas-guest-chat-test-" + UUID().uuidString, isDirectory: true)
+        }
         @MainActor func fixture() -> (SessionStore, FirasAPI, ChatStore) {
             let session = SessionStore()
             let api = FirasAPI()
             let defaults = UserDefaults(suiteName: "firas-chat-race-test-" + UUID().uuidString)!
             return (session, api, ChatStore(session: session, api: api, defaults: defaults,
-                recoveryDelays: [.milliseconds(1), .milliseconds(1)]))
+                recoveryDelays: [.milliseconds(1), .milliseconds(1)], guestTranscriptDirectory: guestDirectory()))
         }
         func summary(_ id: String, agent: Bool = false, code: Bool = false, brain: Bool = false) -> ChatSummary {
             ChatSummary(id: id, title: "Title: " + id, updatedAt: "test", pinned: false,
@@ -186,7 +192,7 @@ import Foundation
             let session = SessionStore()
             let api = FirasAPI()
             let defaults = UserDefaults(suiteName: "firas-chat-restore-test-" + UUID().uuidString)!
-            let original = ChatStore(session: session, api: api, defaults: defaults)
+            let original = ChatStore(session: session, api: api, defaults: defaults, guestTranscriptDirectory: guestDirectory())
             await original.send(text: "original durable", tier: .pro, thinking: false, webSearch: false, language: .english)
             try await waitUntil { api.pendingStarts.count == 1 }
             api.resolveStart(jobID: "restored-job")
@@ -195,7 +201,7 @@ import Foundation
             session.identityID = "owner-away"
             await original.select("another-owner-chat")
             session.identityID = "owner-one"
-            let restored = ChatStore(session: session, api: api, defaults: defaults)
+            let restored = ChatStore(session: session, api: api, defaults: defaults, guestTranscriptDirectory: guestDirectory())
             api.delayedChatIDs = [chatID]
             let baseline = api.chatRequests.filter { $0 == chatID }.count
             let resume = Task { await restored.resumeActiveJob() }
@@ -979,7 +985,8 @@ import Foundation
             let session = SessionStore()
             let api = FirasAPI()
             let defaults = UserDefaults(suiteName: "firas-chat-uncertain-restore-" + UUID().uuidString)!
-            let original = ChatStore(session: session, api: api, defaults: defaults, recoveryDelays: [])
+            let original = ChatStore(session: session, api: api, defaults: defaults, recoveryDelays: [],
+                                     guestTranscriptDirectory: guestDirectory())
             let cid = await original.send(text: "private original", tier: .pro, thinking: false, webSearch: false, language: .english)!
             try await waitUntil { api.pendingStarts.count == 1 }
             let bytes = defaults.data(forKey: "firas.ios.active-chat-job.v1")!
@@ -987,7 +994,8 @@ import Foundation
             expect(pointer["cid"] as? String == cid && pointer["jobID"] as? String == "", "original CID is present in the synthetic defaults suite before the sole admission suspends")
             api.failStart(APIError.httpStatus(408, nil))
             try await waitUntil { original.canForgetUnavailableReceipt }
-            let restored = ChatStore(session: session, api: api, defaults: defaults, recoveryDelays: [])
+            let restored = ChatStore(session: session, api: api, defaults: defaults, recoveryDelays: [],
+                                     guestTranscriptDirectory: guestDirectory())
             api.receipts[cid] = ChatJobReceipt(jobId: "after-relaunch", phase: .completed, cid: cid, chatId: pointer["serverChatID"] as? String)
             api.statusResults = [status(.completed, "recovered result")]
             await restored.resumeActiveJob()
@@ -1077,14 +1085,21 @@ import Foundation
             try await waitUntil { store.activeJobID == "bounded-stop-original" }
             api.cancelFailure = .transport(code: -1001, message: "synthetic response lost")
             await store.stop()
-            expect(api.cancelledJobs.count == 3 && store.isSending && store.activeJobID == "bounded-stop-original" && api.starts.count == 1,
-                   "failed Stop is bounded to three original-ID controls and retains its durable intent without admission replay")
-            expect(store.errorMessage == "تعذّر تأكيد الإيقاف. الطلب الأصلي ما انرسل مرّة ثانية.",
+            expect(api.cancelledJobs.count == 3 && !store.isSending && store.canReconnectActiveJob && !store.canForgetUnavailableReceipt &&
+                   store.activeJobID == "bounded-stop-original" && api.starts.count == 1,
+                   "failed Stop is bounded to three original-ID controls, retains its durable intent and leaves Reconnect instead of a stuck Stop")
+            expect(store.errorMessage == "تعذّر تأكيد الإيقاف. لم يُرسَل الطلب الأصلي مرة أخرى.",
                    "unconfirmed Stop uses the original answer language rather than an English-only notice")
+            let refused = await store.send(text: "while the Stop is unconfirmed", tier: .pro, thinking: false, webSearch: false, language: .arabic)
+            expect(refused == nil && api.starts.count == 1 &&
+                   store.errorMessage == "تعذّر تأكيد الرد الحالي. اضغط «التحقّق من الرد الأصلي» قبل إرسال طلب جديد.",
+                   "Send after an unconfirmed Stop points to Reconnect instead of asking for another Stop")
             api.cancelFailure = nil
-            await store.stop()
-            expect(!store.isSending && api.cancelledJobs.count == 4 && api.starts.count == 1,
-                   "only a later explicit Stop retries an exhausted original control operation")
+            await store.resumeActiveJob()
+            try await waitUntil { !store.isSending && store.activeCID == nil }
+            expect(api.cancelledJobs.count == 4 && api.starts.count == 1 && store.messages.last?.state == .stopped &&
+                   !store.canReconnectActiveJob,
+                   "Reconnect retries the saved Stop once and settles the stopped answer without admission replay")
         }
         do {
             let (session, api, store) = fixture()
@@ -1230,7 +1245,8 @@ import Foundation
             let session = SessionStore()
             let api = FirasAPI()
             let defaults = UserDefaults(suiteName: "firas-chat-stop-during-resume-credentials-" + UUID().uuidString)!
-            let original = ChatStore(session: session, api: api, defaults: defaults, recoveryDelays: [])
+            let original = ChatStore(session: session, api: api, defaults: defaults, recoveryDelays: [],
+                                     guestTranscriptDirectory: guestDirectory())
             await original.send(text: "durable before reopen", tier: .pro, thinking: false, webSearch: false, language: .english)
             try await waitUntil { api.pendingStarts.count == 1 }
             api.resolveStart(jobID: "resume-credentials-original")
@@ -1238,7 +1254,8 @@ import Foundation
             session.identityID = "owner-away"
             original.synchronizeDraftOwner()
             session.identityID = "owner-one"
-            let restored = ChatStore(session: session, api: api, defaults: defaults, recoveryDelays: [])
+            let restored = ChatStore(session: session, api: api, defaults: defaults, recoveryDelays: [],
+                                     guestTranscriptDirectory: guestDirectory())
             api.delayMediaCredentials = true
             let resuming = Task { await restored.resumeActiveJob() }
             try await waitUntil { api.pendingMediaCredentials.count == 1 }
@@ -1256,7 +1273,8 @@ import Foundation
             let session = SessionStore()
             let api = FirasAPI()
             let defaults = UserDefaults(suiteName: "firas-chat-stop-during-resume-history-" + UUID().uuidString)!
-            let original = ChatStore(session: session, api: api, defaults: defaults, recoveryDelays: [])
+            let original = ChatStore(session: session, api: api, defaults: defaults, recoveryDelays: [],
+                                     guestTranscriptDirectory: guestDirectory())
             await original.send(text: "durable before history reopen", tier: .pro, thinking: false, webSearch: false, language: .english)
             try await waitUntil { api.pendingStarts.count == 1 }
             api.resolveStart(jobID: "resume-history-original")
@@ -1265,7 +1283,8 @@ import Foundation
             session.identityID = "owner-away"
             original.synchronizeDraftOwner()
             session.identityID = "owner-one"
-            let restored = ChatStore(session: session, api: api, defaults: defaults, recoveryDelays: [])
+            let restored = ChatStore(session: session, api: api, defaults: defaults, recoveryDelays: [],
+                                     guestTranscriptDirectory: guestDirectory())
             api.delayedChatIDs = [chatID]
             let resuming = Task { await restored.resumeActiveJob() }
             try await waitUntil { api.pendingChats[chatID] != nil }
@@ -1304,6 +1323,467 @@ import Foundation
             await stopping.value
             expect(api.cancelledJobs.count == 4 && api.starts.count == 1 && !store.isSending,
                    "the original known-ID Stop preparation completes alone after an overlapping restore is retired")
+        }
+        // An uncertain admission whose receipt reads all failed used to leave
+        // no control at all: Send refused, nothing retried. Reconnect is now
+        // offered; local removal still needs a receipt proved missing.
+        do {
+            let (_, api, store) = fixture()
+            store.updateDraftText(exactDraft, expectedOwnerID: "owner-one", expectedIdentityGeneration: 0)
+            let snapshot = store.snapshotDraft()!
+            let cid = await store.send(text: exactDraft, tier: .pro, thinking: false, webSearch: false, language: .english)!
+            store.beginDraftSubmission(cid: cid, snapshot: snapshot)
+            try await waitUntil { api.pendingStarts.count == 1 }
+            api.receiptFailure = .transport(code: -1009, message: "synthetic offline")
+            api.failStart(APIError.transport(code: -1001, message: "synthetic timeout"))
+            try await waitUntil { store.canReconnectActiveJob }
+            expect(api.receiptRequests == [cid, cid, cid] && !store.isSending && store.reconnectableReceiptCID == cid &&
+                   store.unavailableReceiptCID == nil && !store.canForgetUnavailableReceipt,
+                   "an uncertain send whose receipt reads all failed offers Reconnect but never local removal")
+            expect(store.errorMessage == "The original answer could not be confirmed. It has not been sent again." &&
+                   store.displayedMessage(store.messages.last!).content == "Answer not confirmed.",
+                   "while the banner says the unconfirmed sentence, the row names only its state instead of repeating it")
+            let refused = await store.send(text: "another request", tier: .pro, thinking: false, webSearch: false, language: .english)
+            expect(refused == nil && api.starts.count == 1 && store.draftText == exactDraft &&
+                   store.errorMessage == "The current answer could not be confirmed. Tap “Check original answer” before sending a new request.",
+                   "the refused Send names the Reconnect control and keeps the editable draft")
+            store.errorMessage = nil
+            let admission = store.difficultyAdmission(for: store.snapshotDraft()!, language: .english)
+            expect(admission == nil && api.classificationCount == 1 &&
+                   store.errorMessage == "The current answer could not be confirmed. Tap “Check original answer” before sending a new request.",
+                   "the screen's admission check refuses with the same reason before any classifier call")
+            let media = await store.prepareMediaTurn(prompt: "media while unconfirmed", tier: .pro,
+                language: .arabic, expectedOwnerID: "owner-one")
+            expect(media == nil && api.updates.count == 1 &&
+                   store.errorMessage == "تعذّر تأكيد الرد الحالي. اضغط «التحقّق من الرد الأصلي» قبل إرسال طلب جديد.",
+                   "a media request is refused with the same reason instead of silently")
+            let unobserved = store.messages.last!
+            expect(unobserved.state == .sending && unobserved.content.isEmpty &&
+                   store.displayedMessage(unobserved).content == "The original answer could not be confirmed. It has not been sent again.",
+                   "the empty answer nothing observes is drawn with the unconfirmed notice, not a spinner, and the stored row is unchanged")
+            let deletion = store.deletionRequest(id: store.selectedConversationID!, title: "unconfirmed")!
+            let deleted = await store.delete(deletion, language: .english)
+            expect(!deleted && api.deletedChatIDs.isEmpty &&
+                   store.errorMessage == "The current answer could not be confirmed. Tap “Check original answer” before deleting this chat.",
+                   "deleting the chat of an unconfirmed answer names Reconnect rather than a Stop that is not shown")
+            api.receiptFailure = nil
+            api.receipts[cid] = ChatJobReceipt(jobId: "reconnected-job", phase: .processing, cid: cid, chatId: store.selectedConversationID)
+            api.statusResults = [status(.completed, "reconnected answer")]
+            await store.resumeActiveJob()
+            try await waitUntil { !store.isSending && store.activeCID == nil }
+            expect(api.starts.count == 1 && store.messages.last?.content == "reconnected answer" &&
+                   store.messages.last?.state == .delivered && !store.canReconnectActiveJob && store.errorMessage == nil &&
+                   store.displayedMessage(store.messages.last!) == store.messages.last!,
+                   "Reconnect re-reads the original receipt, shows its answer and retires the notice without a second admission")
+            expect(store.lastAcceptedSend?.cid == cid && store.draftText.isEmpty,
+                   "the reconnected acceptance consumes only the registered original draft")
+        }
+        // Returning to the app does what Reconnect does, in the job's own
+        // chat, without moving the reader out of the conversation they opened.
+        do {
+            let (_, api, store) = fixture()
+            api.listedChats = [summary("reading-chat")]
+            await store.loadConversations()
+            await store.new()
+            let jobChat = store.selectedConversationID!
+            let cid = await store.send(text: "answer while away", tier: .pro, thinking: false, webSearch: false, language: .english)!
+            try await waitUntil { api.pendingStarts.count == 1 }
+            api.receiptFailure = .transport(code: -1009, message: "synthetic offline")
+            api.failStart(APIError.transport(code: -1005, message: "synthetic lost ACK"))
+            try await waitUntil { store.canReconnectActiveJob }
+            await store.select("reading-chat")
+            api.receiptFailure = nil
+            api.receipts[cid] = ChatJobReceipt(jobId: "activation-job", phase: .processing, cid: cid, chatId: jobChat)
+            api.statusResults = [status(.completed, "finished while away")]
+            await store.resumeAfterActivation()
+            try await waitUntil { !store.isSending && store.activeCID == nil }
+            expect(store.selectedConversationID == "reading-chat" && api.starts.count == 1 && api.cancelledJobs.isEmpty &&
+                   api.receiptRequests.filter { $0 == cid }.count == 4 && !store.canReconnectActiveJob,
+                   "becoming active re-observes the unconfirmed answer in its own chat without moving the reader or sending again")
+            let next = await store.send(text: "after returning", tier: .pro, thinking: false, webSearch: false, language: .english)
+            try await waitUntil { api.pendingStarts.count == 1 }
+            expect(next != nil && api.starts.count == 2, "the recovered answer releases Send")
+            api.resolveStart(jobID: "after-activation", phase: .completed, text: "next answer")
+            try await waitUntil { !store.isSending }
+            await store.resumeAfterActivation()
+            expect(api.receiptRequests.filter { $0 == cid }.count == 4 && api.starts.count == 2,
+                   "becoming active with nothing saved reads nothing")
+        }
+        // The server prunes a finished job after six hours and then answers
+        // "unknown". That must never turn the saved answer back into a
+        // spinner; the saved chat is read before any receipt recovery.
+        do {
+            let session = SessionStore()
+            let api = FirasAPI()
+            let defaults = UserDefaults(suiteName: "firas-chat-pruned-job-" + UUID().uuidString)!
+            let original = ChatStore(session: session, api: api, defaults: defaults, recoveryDelays: [],
+                                     guestTranscriptDirectory: guestDirectory())
+            let cid = await original.send(text: "answer finished overnight", tier: .pro, thinking: false, webSearch: false, language: .english)!
+            try await waitUntil { api.pendingStarts.count == 1 }
+            api.resolveStart(jobID: "pruned-overnight")
+            try await waitUntil { original.activeJobID == "pruned-overnight" }
+            let chatID = original.selectedConversationID!
+            session.identityID = "owner-away"
+            original.synchronizeDraftOwner()
+            session.identityID = "owner-one"
+            var saved = api.chats[chatID]!
+            saved.messages.append(ChatMessage(role: .assistant, content: "the finished overnight answer", cid: cid))
+            api.chats[chatID] = saved
+            api.delayStatuses = true
+            let restored = ChatStore(session: session, api: api, defaults: defaults, recoveryDelays: [],
+                                     guestTranscriptDirectory: guestDirectory())
+            await restored.resumeActiveJob()
+            try await waitUntil { api.pendingStatuses.count == 1 }
+            let shown = restored.messages.last
+            expect(shown?.content == "the finished overnight answer" && shown?.state == .delivered && restored.isSending,
+                   "restoring shows the answer saved in the chat while its job is checked again")
+            api.pendingStatuses.removeFirst().resume(returning: status(.unknown))
+            try await waitUntil { api.pendingStatuses.count == 1 }
+            expect(restored.messages.last == shown, "an unknown status never turns the saved finished answer back into a running one")
+            api.delayStatuses = false
+            api.statusResults = [status(.unknown)]
+            api.pendingStatuses.removeFirst().resume(returning: status(.unknown))
+            try await waitUntil { !restored.isSending && restored.activeCID == nil }
+            expect(restored.messages.last?.content == "the finished overnight answer" && restored.messages.last?.state == .delivered &&
+                   api.receiptRequests.isEmpty && defaults.data(forKey: "firas.ios.active-chat-job.v1") == nil &&
+                   !restored.canReconnectActiveJob && restored.errorMessage == nil,
+                   "a pruned job whose answer is in the saved chat is adopted as complete and its record cleared, without receipt recovery")
+        }
+        // An uncertain send's receipt is pruned with its finished job too. The
+        // answer filed in the saved chat proves the admission and is adopted,
+        // instead of Reconnect and Remove offered beneath a finished answer.
+        do {
+            let session = SessionStore()
+            let api = FirasAPI()
+            let defaults = UserDefaults(suiteName: "firas-chat-pruned-receipt-" + UUID().uuidString)!
+            let original = ChatStore(session: session, api: api, defaults: defaults, recoveryDelays: [],
+                                     guestTranscriptDirectory: guestDirectory())
+            let cid = await original.send(text: "uncertain overnight", tier: .pro, thinking: false, webSearch: false, language: .english)!
+            try await waitUntil { api.pendingStarts.count == 1 }
+            let chatID = original.selectedConversationID!
+            api.receiptFailure = .transport(code: -1009, message: "synthetic offline")
+            api.failStart(APIError.transport(code: -1001, message: "synthetic timeout"))
+            try await waitUntil { original.canReconnectActiveJob }
+            api.receiptFailure = nil
+            var saved = api.chats[chatID]!
+            saved.messages.append(ChatMessage(role: .assistant, content: "the answer filed overnight", cid: cid))
+            api.chats[chatID] = saved
+            let restored = ChatStore(session: session, api: api, defaults: defaults, recoveryDelays: [],
+                                     guestTranscriptDirectory: guestDirectory())
+            await restored.resumeActiveJob()
+            try await waitUntil { !restored.isSending && restored.activeCID == nil }
+            expect(restored.messages.last?.content == "the answer filed overnight" && restored.messages.last?.state == .delivered &&
+                   !restored.canReconnectActiveJob && !restored.canForgetUnavailableReceipt && restored.errorMessage == nil &&
+                   defaults.data(forKey: "firas.ios.active-chat-job.v1") == nil && api.starts.count == 1 && api.statusRequests.isEmpty,
+                   "a receipt pruned with its finished job adopts the saved answer and clears the record, without Reconnect beneath it")
+            let next = await restored.send(text: "after the adopted answer", tier: .pro, thinking: false, webSearch: false, language: .english)
+            try await waitUntil { api.pendingStarts.count == 1 }
+            expect(next != nil && api.starts.count == 2, "the adopted answer releases Send")
+            api.resolveStart(jobID: "after-adopted-receipt", phase: .completed, text: "next answer")
+            try await waitUntil { !restored.isSending }
+        }
+        // A guest has no saved chat, so the receipt decides. Removing the
+        // proven-missing receipt keeps any answer text already shown.
+        do {
+            let (session, api, store) = fixture()
+            session.isAuthenticated = false
+            session.identityID = "guest-pruned"
+            await store.loadConversations()
+            let cid = await store.send(text: "guest long request", tier: .pro, thinking: false, webSearch: false, language: .english)!
+            try await waitUntil { api.pendingStarts.count == 1 }
+            api.statusResults = [status(.processing, "partial answer before suspension"),
+                                 status(.unknown), status(.unknown), status(.unknown)]
+            api.resolveStart(jobID: "guest-pruned-job")
+            try await waitUntil { store.canForgetUnavailableReceipt }
+            expect(store.canReconnectActiveJob && store.messages.last?.content == "partial answer before suspension" &&
+                   api.receiptRequests == [cid, cid, cid] && api.chatRequests.isEmpty,
+                   "a guest's unknown job reads no saved chat and is decided by its receipt")
+            store.forgetUnavailableReceipt(cid: cid, expectedOwnerID: "guest-pruned", expectedIdentityGeneration: 0)
+            expect(store.messages.last?.content == "partial answer before suspension" && store.messages.last?.state == .delivered &&
+                   !store.canReconnectActiveJob && store.activeCID == nil,
+                   "removing a proven-missing receipt never marks an answer that has content as failed")
+        }
+        // A guest taps Stop on a weak connection and comes back the next day,
+        // after the server pruned the job: its status is "unknown" and Stop
+        // answers 404. Together they prove nothing is left to stop.
+        do {
+            let (session, api, store) = fixture()
+            session.isAuthenticated = false
+            session.identityID = "guest-pruned-stop"
+            await store.loadConversations()
+            let guestChatID = store.selectedConversationID
+            await store.send(text: "guest Stop overnight", tier: .pro, thinking: false, webSearch: false, language: .arabic)
+            try await waitUntil { api.pendingStarts.count == 1 }
+            api.resolveStart(jobID: "guest-pruned-stop-job")
+            try await waitUntil { store.activeJobID == "guest-pruned-stop-job" && api.statusRequests.count == 1 }
+            api.cancelFailure = .transport(code: -1001, message: "synthetic weak connection")
+            await store.stop()
+            expect(store.canReconnectActiveJob && !store.isSending && api.cancelledJobs.count == 3,
+                   "the unconfirmed guest Stop leaves Reconnect instead of a stuck Stop")
+            await store.new()
+            expect(store.selectedConversationID == guestChatID &&
+                   store.errorMessage == "تعذّر تأكيد الرد الحالي. اضغط «التحقّق من الرد الأصلي» قبل بدء محادثة ضيف جديدة.",
+                   "a guest's New chat refused meanwhile names Reconnect, not the hidden Stop")
+            api.statusResults = [status(.unknown)]
+            api.cancelFailure = .httpStatus(404, nil)
+            await store.resumeAfterActivation()
+            try await waitUntil { !store.isSending && store.activeCID == nil }
+            expect(store.messages.last?.state == .stopped && !store.canReconnectActiveJob && store.activeJobID == nil &&
+                   store.errorMessage == nil && api.cancelledJobs.count == 4 && api.starts.count == 1,
+                   "an unknown status and a 404 Stop settle the stopped answer instead of retrying forever")
+            api.cancelFailure = nil
+            let next = await store.send(text: "after the pruned Stop", tier: .pro, thinking: false, webSearch: false, language: .arabic)
+            try await waitUntil { api.pendingStarts.count == 1 }
+            expect(next != nil && api.starts.count == 2, "the settled Stop releases Send for a second admission")
+            api.resolveStart(jobID: "after-pruned-stop", phase: .completed, text: "next answer")
+            try await waitUntil { !store.isSending }
+        }
+        // A member's pruned job may have filed its answer in the saved chat:
+        // that answer outranks the Stop and is read before the 404 exit.
+        do {
+            let (_, api, store) = fixture()
+            let cid = await store.send(text: "member Stop overnight", tier: .pro, thinking: false, webSearch: false, language: .english)!
+            try await waitUntil { api.pendingStarts.count == 1 }
+            api.resolveStart(jobID: "member-pruned-stop-job")
+            try await waitUntil { store.activeJobID == "member-pruned-stop-job" && api.statusRequests.count == 1 }
+            let chatID = store.selectedConversationID!
+            var saved = api.chats[chatID]!
+            saved.messages.append(ChatMessage(role: .assistant, content: "the answer filed before the Stop", cid: cid))
+            api.chats[chatID] = saved
+            api.statusResults = [status(.unknown)]
+            api.cancelFailure = .httpStatus(404, nil)
+            await store.stop()
+            expect(store.activeCID == nil && !store.isSending && api.cancelledJobs.isEmpty && !store.canReconnectActiveJob &&
+                   store.messages.last?.content == "the answer filed before the Stop" && store.messages.last?.state == .delivered,
+                   "a pruned member job whose answer is saved is adopted before any Stop is sent")
+        }
+        // A resumed record carries its rows' states: an earlier failed guest
+        // turn stays failed, and the running row keeps running.
+        do {
+            let (session, api, store) = fixture()
+            session.isAuthenticated = false
+            session.identityID = "guest-states"
+            await store.loadConversations()
+            await store.send(text: "guest refused turn", tier: .pro, thinking: false, webSearch: false, language: .english)
+            try await waitUntil { api.pendingStarts.count == 1 }
+            api.failStart(APIError.httpStatus(400, nil))
+            try await waitUntil { !store.isSending }
+            await store.send(text: "guest running turn", tier: .pro, thinking: false, webSearch: false, language: .english)
+            try await waitUntil { api.pendingStarts.count == 1 }
+            api.delayStatuses = true
+            api.resolveStart(jobID: "guest-states-job")
+            try await waitUntil { api.pendingStatuses.count == 1 }
+            session.isWorking = true
+            session.identityGeneration += 1
+            store.synchronizeDraftOwner()
+            api.pendingStatuses.removeFirst().resume(returning: status(.processing))
+            try await Task.sleep(for: .milliseconds(20))
+            session.isWorking = false
+            await store.reloadAfterSessionOperationIfNeeded()
+            try await waitUntil { api.pendingStatuses.count == 1 }
+            let resumedStates: [ChatMessageState] = [.delivered, .failed, .delivered, .sending]
+            expect(store.messages.map(\.state) == resumedStates && store.isSending,
+                   "re-observing a guest's saved job keeps the earlier failed turn failed and the running row running")
+            api.delayStatuses = false
+            api.pendingStatuses.removeFirst().resume(returning: status(.completed, "guest running answer"))
+            try await waitUntil { !store.isSending && store.activeCID == nil }
+            let finishedStates: [ChatMessageState] = [.delivered, .failed, .delivered, .delivered]
+            expect(store.messages.map(\.state) == finishedStates && store.messages.last?.content == "guest running answer",
+                   "finishing the re-observed job keeps every earlier row's own state")
+        }
+        // A guest's transcript lives only on this device and survives the app
+        // being closed: thumbnails, no full images or file text, within a cap.
+        func transcriptURL(_ directory: URL) -> URL { directory.appendingPathComponent("transcript.json") }
+        func guestFile(_ directory: URL) -> [String: Any]? {
+            guard let data = try? Data(contentsOf: transcriptURL(directory)) else { return nil }
+            return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        }
+        do {
+            let directory = guestDirectory()
+            let session = SessionStore()
+            session.isAuthenticated = false
+            session.identityID = "guest-keep"
+            let api = FirasAPI()
+            let defaults = UserDefaults(suiteName: "firas-chat-guest-transcript-" + UUID().uuidString)!
+            let first = ChatStore(session: session, api: api, defaults: defaults, recoveryDelays: [],
+                                  guestTranscriptDirectory: directory)
+            await first.loadConversations()
+            let guestChatID = first.selectedConversationID!
+            let photo = PreparedChatContext(fullImages: ["full-image-bytes"], imageThumbnails: ["thumb-bytes"],
+                files: [ChatAttachment(name: "notes.txt", kind: "text")], fileText: "private file text")
+            await first.send(text: "guest photo request", tier: .pro, thinking: false, webSearch: false,
+                             language: .english, context: photo)
+            try await waitUntil { api.pendingStarts.count == 1 }
+            api.resolveStart(jobID: "guest-kept", phase: .completed, text: "guest kept answer")
+            try await waitUntil { !first.isSending }
+            await first.send(text: "guest failed follow-up", tier: .pro, thinking: false, webSearch: false, language: .english)
+            try await waitUntil { api.pendingStarts.count == 1 }
+            api.failStart(APIError.httpStatus(400, nil))
+            try await waitUntil { !first.isSending }
+            try await waitUntil { (guestFile(directory)?["messages"] as? [[String: Any]])?.count == 4 }
+            let stored = guestFile(directory)!
+            let rows = stored["messages"] as! [[String: Any]]
+            let storedStates: [String] = ["delivered", "delivered", "delivered", "failed"]
+            let storedThumbs: [String] = ["thumb-bytes"]
+            let ownedCopy = stored["ownerID"] as? String == "guest-keep" && stored["conversationID"] as? String == guestChatID
+            let storedFileName = (rows[0]["files"] as? [[String: Any]])?.first?["name"] as? String
+            let lightRow = rows[0]["imageThumbs"] as? [String] == storedThumbs && rows[0]["images"] == nil && rows[0]["fileText"] == nil
+            expect(ownedCopy && lightRow && storedFileName == "notes.txt" && stored["states"] as? [String] == storedStates,
+                   "the device copy keeps thumbnails, attachment names and states but no full image or file text")
+            let backup = try transcriptURL(directory).resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup
+            expect(backup == true, "the guest copy is excluded from backup")
+            let relaunched = ChatStore(session: session, api: api, defaults: defaults, recoveryDelays: [],
+                                       guestTranscriptDirectory: directory)
+            await relaunched.loadConversations()
+            let restoredStates: [ChatMessageState] = [.delivered, .delivered, .delivered, .failed]
+            let restoredPhoto = relaunched.messages.first
+            expect(relaunched.selectedConversationID == guestChatID &&
+                   relaunched.messages.map(\.content) == first.messages.map(\.content) &&
+                   relaunched.messages.map(\.state) == restoredStates && api.historyReadScopes.isEmpty,
+                   "a relaunch for the same guest restores the transcript and its states from the device copy")
+            expect(restoredPhoto?.imageThumbs == storedThumbs && restoredPhoto?.images == nil && restoredPhoto?.fileText == nil,
+                   "the restored photo turn shows its thumbnail without the full image or file text")
+            await relaunched.new()
+            try await waitUntil { !FileManager.default.fileExists(atPath: transcriptURL(directory).path) }
+            expect(relaunched.messages.isEmpty && relaunched.selectedConversationID != guestChatID,
+                   "an explicit New chat starts empty and clears the device copy")
+        }
+        do {
+            let directory = guestDirectory()
+            let session = SessionStore()
+            session.isAuthenticated = false
+            session.identityID = "guest-large"
+            let api = FirasAPI()
+            let defaults = UserDefaults(suiteName: "firas-chat-guest-cap-" + UUID().uuidString)!
+            let store = ChatStore(session: session, api: api, defaults: defaults, recoveryDelays: [],
+                                  guestTranscriptDirectory: directory)
+            await store.loadConversations()
+            for (index, turn) in ["turn one", "turn two", "turn three"].enumerated() {
+                await store.send(text: turn, tier: .pro, thinking: false, webSearch: false, language: .english)
+                try await waitUntil { api.pendingStarts.count == 1 }
+                api.resolveStart(jobID: "large-turn-\(index)", phase: .completed, text: String(repeating: "a", count: 400_000))
+                try await waitUntil { !store.isSending }
+            }
+            try await waitUntil {
+                (guestFile(directory)?["messages"] as? [[String: Any]])?.first?["content"] as? String == "turn two"
+            }
+            let size = try transcriptURL(directory).resourceValues(forKeys: [.fileSizeKey]).fileSize ?? .max
+            let relaunched = ChatStore(session: session, api: api, defaults: defaults, recoveryDelays: [],
+                                       guestTranscriptDirectory: directory)
+            await relaunched.loadConversations()
+            expect(size <= 1_000_000 && store.messages.count == 6 && relaunched.messages.count == 4 &&
+                   relaunched.messages.first?.content == "turn two" && relaunched.messages.last?.content.count == 400_000,
+                   "the device copy keeps the newest whole turns within its size cap while the screen keeps them all")
+        }
+        // One turn over the cap must not cost every earlier turn: a long turn
+        // gives up its stored reasoning first, and a turn larger than the
+        // whole file is left out on its own.
+        do {
+            let directory = guestDirectory()
+            let session = SessionStore()
+            session.isAuthenticated = false
+            session.identityID = "guest-oversized"
+            let api = FirasAPI()
+            let store = ChatStore(session: session, api: api,
+                                  defaults: UserDefaults(suiteName: "firas-chat-guest-oversized-" + UUID().uuidString)!,
+                                  recoveryDelays: [], guestTranscriptDirectory: directory)
+            await store.loadConversations()
+            await store.send(text: "short turn", tier: .pro, thinking: false, webSearch: false, language: .english)
+            try await waitUntil { api.pendingStarts.count == 1 }
+            api.resolveStart(jobID: "short-turn", phase: .completed, text: "short answer")
+            try await waitUntil { !store.isSending }
+            await store.send(text: "reasoned turn", tier: .pro, thinking: false, webSearch: false, language: .english)
+            try await waitUntil { api.pendingStarts.count == 1 }
+            api.statusResults = [ChatJobStatus(phase: .completed, text: String(repeating: "b", count: 600_000),
+                reasoning: String(repeating: "r", count: 600_000), error: nil, status: nil, surface: nil, progress: nil)]
+            api.resolveStart(jobID: "reasoned-turn")
+            try await waitUntil { !store.isSending }
+            try await waitUntil { (guestFile(directory)?["messages"] as? [[String: Any]])?.count == 4 }
+            let reasoned = (guestFile(directory)?["messages"] as? [[String: Any]])?.last
+            expect((reasoned?["content"] as? String)?.count == 600_000 && reasoned?["reasoning"] == nil &&
+                   store.messages.last?.reasoning?.count == 600_000,
+                   "a turn over the cap keeps its answer on the device and gives up only the stored reasoning")
+            await store.send(text: "oversized turn", tier: .pro, thinking: false, webSearch: false, language: .english)
+            try await waitUntil { api.pendingStarts.count == 1 }
+            api.resolveStart(jobID: "oversized-turn", phase: .completed, text: String(repeating: "c", count: 1_100_000))
+            try await waitUntil { !store.isSending }
+            try await waitUntil { (guestFile(directory)?["messages"] as? [[String: Any]])?.count == 5 }
+            let rows = guestFile(directory)?["messages"] as? [[String: Any]] ?? []
+            let size = try transcriptURL(directory).resourceValues(forKeys: [.fileSizeKey]).fileSize ?? .max
+            expect(rows.first?["content"] as? String == "short turn" && rows.last?["content"] as? String == "oversized turn" &&
+                   size <= 1_000_000 && store.messages.count == 6,
+                   "a turn larger than the whole file is left out alone, and every earlier turn stays on the device")
+        }
+        do {
+            let directory = guestDirectory()
+            let session = SessionStore()
+            session.isAuthenticated = false
+            session.identityID = "guest-old"
+            let api = FirasAPI()
+            let store = ChatStore(session: session, api: api,
+                                  defaults: UserDefaults(suiteName: "firas-chat-guest-owner-" + UUID().uuidString)!,
+                                  recoveryDelays: [], guestTranscriptDirectory: directory)
+            await store.loadConversations()
+            await store.send(text: "old guest request", tier: .pro, thinking: false, webSearch: false, language: .english)
+            try await waitUntil { api.pendingStarts.count == 1 }
+            api.resolveStart(jobID: "old-guest-job", phase: .completed, text: "old guest answer")
+            try await waitUntil { FileManager.default.fileExists(atPath: transcriptURL(directory).path) }
+            let otherSession = SessionStore()
+            otherSession.isAuthenticated = false
+            otherSession.identityID = "guest-new"
+            let otherGuest = ChatStore(session: otherSession, api: api,
+                                       defaults: UserDefaults(suiteName: "firas-chat-guest-other-" + UUID().uuidString)!,
+                                       recoveryDelays: [], guestTranscriptDirectory: directory)
+            await otherGuest.loadConversations()
+            expect(otherGuest.messages.isEmpty && !FileManager.default.fileExists(atPath: transcriptURL(directory).path),
+                   "another guest identity never sees the device copy, which is removed")
+        }
+        do {
+            let directory = guestDirectory()
+            let session = SessionStore()
+            session.isAuthenticated = false
+            session.identityID = "guest-replaced"
+            let api = FirasAPI()
+            let store = ChatStore(session: session, api: api,
+                                  defaults: UserDefaults(suiteName: "firas-chat-guest-replaced-" + UUID().uuidString)!,
+                                  recoveryDelays: [], guestTranscriptDirectory: directory)
+            await store.loadConversations()
+            await store.send(text: "replaced guest request", tier: .pro, thinking: false, webSearch: false, language: .english)
+            try await waitUntil { api.pendingStarts.count == 1 }
+            api.resolveStart(jobID: "replaced-guest-job", phase: .completed, text: "replaced guest answer")
+            try await waitUntil { FileManager.default.fileExists(atPath: transcriptURL(directory).path) }
+            session.identityID = "guest-replacement"
+            await store.loadConversations()
+            try await waitUntil { !FileManager.default.fileExists(atPath: transcriptURL(directory).path) }
+            expect(store.messages.isEmpty, "a replacement guest identity in the running app clears the previous guest's copy")
+        }
+        do {
+            let directory = guestDirectory()
+            let session = SessionStore()
+            session.isAuthenticated = false
+            session.identityID = "guest-signing-in"
+            let api = FirasAPI()
+            let store = ChatStore(session: session, api: api,
+                                  defaults: UserDefaults(suiteName: "firas-chat-guest-member-" + UUID().uuidString)!,
+                                  recoveryDelays: [], guestTranscriptDirectory: directory)
+            await store.loadConversations()
+            await store.send(text: "before signing in", tier: .pro, thinking: false, webSearch: false, language: .english)
+            try await waitUntil { api.pendingStarts.count == 1 }
+            api.resolveStart(jobID: "before-sign-in", phase: .completed, text: "guest answer before sign-in")
+            try await waitUntil { FileManager.default.fileExists(atPath: transcriptURL(directory).path) }
+            session.isAuthenticated = true
+            session.identityID = "member-after-guest"
+            store.synchronizeDraftOwner()
+            try await waitUntil { !FileManager.default.fileExists(atPath: transcriptURL(directory).path) }
+            await store.loadConversations()
+            await store.send(text: "member request", tier: .pro, thinking: false, webSearch: false, language: .english)
+            try await waitUntil { api.pendingStarts.count == 1 }
+            api.resolveStart(jobID: "member-after-guest-job", phase: .completed, text: "member answer")
+            try await waitUntil { !store.isSending }
+            try await Task.sleep(for: .milliseconds(30))
+            expect(!FileManager.default.fileExists(atPath: transcriptURL(directory).path) &&
+                   store.messages.last?.content == "member answer",
+                   "signing in as a member clears the guest copy, and a member's chats are never written there")
         }
         // Every session operation starts a new epoch, even a closed Google
         // sheet, a failed login, a refresh or an export. The same owner keeps
@@ -1544,7 +2024,8 @@ import Foundation
             let session = SessionStore()
             let api = FirasAPI()
             let defaults = UserDefaults(suiteName: "firas-chat-launch-opens-job-" + UUID().uuidString)!
-            let original = ChatStore(session: session, api: api, defaults: defaults, recoveryDelays: [])
+            let original = ChatStore(session: session, api: api, defaults: defaults, recoveryDelays: [],
+                                     guestTranscriptDirectory: guestDirectory())
             api.listedChats = [summary("launch-job-chat")]
             await original.loadConversations()
             await original.send(text: "still running at launch", tier: .pro, thinking: false, webSearch: false, language: .english)
@@ -1560,7 +2041,8 @@ import Foundation
             api.delayStatuses = false
             api.statusResults = [status(.completed, "answer found at launch")]
             api.listedChats = [summary("newer-chat"), summary("launch-job-chat")]
-            let relaunched = ChatStore(session: session, api: api, defaults: defaults, recoveryDelays: [])
+            let relaunched = ChatStore(session: session, api: api, defaults: defaults, recoveryDelays: [],
+                                     guestTranscriptDirectory: guestDirectory())
             await relaunched.loadConversations()
             try await waitUntil { !relaunched.isSending && relaunched.activeCID == nil }
             expect(relaunched.selectedConversationID == "launch-job-chat" &&
@@ -1675,7 +2157,302 @@ import Foundation
             expect(Array(result.savedHistory.prefix(history.count)) == history && result.savedHistory.count == 36,
                    "all thirty-five historical turns remain saved while the smaller inference suffix is submitted")
         }
-        print("CLEAN: \(checks) production ChatStore race/history/pin/delete/admission checks")
+
+        // Failure text is short and in the turn's language (else the app's);
+        // never a raw code, a system sentence or a server text in the other language.
+        do {
+            let arabicNotice = "تعذّر إكمال الطلب بسبب حدّ الاستخدام أو كثرة الطلبات."
+            let modelText: String? = "The selected model is not available right now. Try again shortly or choose another model."
+            let quotaText: String? = "وصلت إلى حدّ الاستخدام أو كثرت الطلبات. انتظر قليلاً ثم أعد المحاولة."
+            let busyText: String? = "The server is busy right now. Try again in a minute."
+            expect(FirasErrorText.text(code: "selected_model_unavailable", notice: arabicNotice, english: false) == arabicNotice,
+                   "a server notice in the reader's language is shown as it is")
+            expect(FirasErrorText.text(code: "selected_model_unavailable", notice: arabicNotice, english: true) == modelText,
+                   "a notice in the other language gives way to its code's own text")
+            expect(FirasErrorText.text(code: "selected_model_unavailable", notice: "{\"upstream\": \"body text\"}", english: true) == modelText,
+                   "a notice that is not a sentence is never shown")
+            expect(FirasErrorText.text(code: "upstream said something", english: false) == nil,
+                   "unknown server text is never returned")
+            expect(FirasErrorText.text(status: 429, code: "media_request_failed", english: false) == quotaText,
+                   "a limit without a known code still names its next step")
+            expect(FirasErrorText.text(status: 503, code: nil, english: true) == busyText,
+                   "a server failure asks for a retry in a minute")
+            expect(FirasErrorText.connection(code: -1009, english: true) ==
+                       "There is no internet connection. Check your connection, then try again.",
+                   "offline names the connection in English")
+            expect(FirasErrorText.connection(code: -1001, english: false) ==
+                       "انتهت مهلة الاتصال بالخادم. تحقّق من اتصالك ثم أعد المحاولة.",
+                   "a timeout names the connection in Arabic")
+        }
+        for (failure, language, expected) in [
+            (APIError.httpStatus(429, "daily_quota_reached"), AppLanguage.english,
+             "You have reached today's usage limit. You can continue tomorrow."),
+            (APIError.httpStatus(429, "media_request_failed"), AppLanguage.arabic,
+             "وصلت إلى حدّ الاستخدام أو كثرت الطلبات. انتظر قليلاً ثم أعد المحاولة."),
+            (APIError.httpStatus(401, "authentication_required"), AppLanguage.english,
+             "Your session has ended. Sign in again, then try again."),
+            (APIError.httpStatus(413, "payload_too_large"), AppLanguage.arabic,
+             "الطلب أو الملف كبير جداً. صغّر حجمه أو قسّمه ثم أعد المحاولة."),
+            (APIError.httpStatus(400, "invalid JSON body"), AppLanguage.english,
+             "This request could not be accepted. Edit it, then try again."),
+        ] {
+            let (_, api, store) = fixture()
+            await store.send(text: "mapped admission failure", tier: .pro, thinking: false, webSearch: false, language: language)
+            try await waitUntil { api.pendingStarts.count == 1 }
+            api.failStart(failure)
+            try await waitUntil { !store.isSending }
+            expect(store.errorMessage == expected && store.messages.last?.content == expected &&
+                   store.messages.last?.state == .failed && api.starts.count == 1,
+                   "a rejected admission names its reason and next step in the turn's language, never its code")
+        }
+        for (language, error, expected) in [
+            (AppLanguage.english,
+             "{\"error\":\"selected_model_unavailable\",\"message\":\"This request could not finish because a usage or request limit was reached.\"}",
+             "This request could not finish because a usage or request limit was reached."),
+            (AppLanguage.arabic,
+             "{\"error\":\"selected_model_unavailable\",\"message\":\"The selected model could not complete this answer.\"}",
+             "النموذج المحدد غير متاح الآن. أعد المحاولة بعد قليل أو اختر نموذجاً آخر."),
+            (AppLanguage.english, "{\"error\":\"cancelled\"}", "The answer was stopped."),
+            (AppLanguage.arabic, "previous_attempt_failed", "تعذّر إكمال الإجابة. أعد المحاولة."),
+        ] {
+            let (_, api, store) = fixture()
+            await store.send(text: "failed job", tier: .pro, thinking: false, webSearch: false, language: language)
+            try await waitUntil { api.pendingStarts.count == 1 }
+            api.statusResults = [ChatJobStatus(phase: .failed, text: nil, reasoning: nil, error: error,
+                                               status: 503, surface: nil, progress: nil)]
+            api.resolveStart(jobID: "failed-job-" + UUID().uuidString)
+            try await waitUntil { !store.isSending }
+            expect(store.errorMessage == expected && store.messages.last?.content == expected &&
+                   store.messages.last?.state == .failed,
+                   "a failed job shows the server's notice in the turn's language, else its code's text, never the code")
+        }
+        for saved in [nil, "en"] as [String?] {
+            let session = SessionStore()
+            let api = FirasAPI()
+            let defaults = UserDefaults(suiteName: "firas-chat-app-language-" + UUID().uuidString)!
+            if let saved { defaults.set(saved, forKey: "lang") }
+            let store = ChatStore(session: session, api: api, defaults: defaults,
+                recoveryDelays: [.milliseconds(1), .milliseconds(1)], guestTranscriptDirectory: guestDirectory())
+            api.delayedChatIDs = ["offline-read"]
+            let selection = Task { await store.select("offline-read") }
+            try await waitUntil { api.pendingChats["offline-read"] != nil }
+            api.pendingChats.removeValue(forKey: "offline-read")?.resume(throwing:
+                APIError.transport(code: -1009, message: "The Internet connection appears to be offline."))
+            await selection.value
+            let expected: String = saved == "en"
+                ? "There is no internet connection. Check your connection, then try again."
+                : "لا يتوفر اتصال بالإنترنت. تحقّق من اتصالك ثم أعد المحاولة."
+            expect(store.errorMessage == expected,
+                   "a failure outside any turn follows the saved app language, never the system's own sentence")
+        }
+        do {
+            let (_, api, store) = fixture()
+            await store.send(text: "first English turn", tier: .pro, thinking: false, webSearch: false, language: .english)
+            try await waitUntil { api.pendingStarts.count == 1 }
+            let refused = await store.send(text: "second English turn", tier: .pro, thinking: false, webSearch: false, language: .english)
+            expect(refused == nil && store.errorMessage == "An answer is in progress. Stop it before sending a new message.",
+                   "the in-progress refusal follows the reader's language")
+            await store.stop()
+            api.resolveStart(jobID: "english-stopped-turn")
+            try await waitUntil { !store.isSending }
+            expect(store.messages.last?.state == .stopped && store.messages.last?.content == "The answer was stopped." &&
+                   api.cancelledJobs == ["english-stopped-turn"],
+                   "a stopped English answer says so in English")
+        }
+        do {
+            let (session, api, store) = fixture()
+            session.isAuthenticated = false
+            session.identityID = nil
+            let refused = await store.send(text: "no guest yet", tier: .pro, thinking: false, webSearch: false, language: .english)
+            expect(refused == nil && api.starts.isEmpty &&
+                   store.errorMessage == "The guest session could not start. Check your connection, then try again.",
+                   "a guest session that could not start says so in the reader's language")
+        }
+
+        // The single-chat read carries no product flags; the list decides, so
+        // a Code project or Brain notebook never becomes the Chat transcript.
+        do {
+            let (_, api, store) = fixture()
+            api.listedChats = [summary("ordinary-open"), summary("code-project", code: true),
+                               summary("brain-notebook", brain: true)]
+            await store.loadConversations()
+            let reads = api.chatRequests.count
+            await store.select("code-project")
+            await store.select("brain-notebook")
+            expect(store.selectedConversationID == "ordinary-open" && api.chatRequests.count == reads,
+                   "a listed Code project or Brain notebook is refused before any read and the open chat stays")
+        }
+        do {
+            let (_, api, store) = fixture()
+            await store.select("opened-before-list")
+            expect(store.selectedConversationID == "opened-before-list", "a chat the list has not described yet can open")
+            api.listedChats = [summary("opened-before-list", code: true), summary("ordinary-next")]
+            await store.loadConversations()
+            expect(store.selectedConversationID == "ordinary-next",
+                   "once the list marks the open chat as a Code project it is closed for the first ordinary chat")
+        }
+        do {
+            let (_, api, store) = fixture()
+            api.delayedChatIDs = ["racing-notebook"]
+            let selection = Task { await store.select("racing-notebook") }
+            try await waitUntil { api.pendingChats["racing-notebook"] != nil }
+            api.listedChats = [summary("racing-notebook", brain: true)]
+            await store.loadConversations()
+            api.resolveChat(id: "racing-notebook")
+            await selection.value
+            expect(store.selectedConversationID == nil,
+                   "a notebook read still in flight when the list arrives is not opened")
+        }
+
+        // Refreshing the open chat (the foreground return, a pull and a tap on
+        // the open row) re-reads turns saved elsewhere and nothing else.
+        do {
+            let (_, api, store) = fixture()
+            let phone = ChatMessage(role: .user, content: "asked on the phone", cid: "phone-turn")
+            api.chats["shared-chat"] = ChatConversation(id: "shared-chat", title: "Shared", messages: [phone])
+            await store.select("shared-chat")
+            let web = ChatMessage(role: .user, content: "asked on the website", cid: "web-turn")
+            let webAnswer = ChatMessage(role: .assistant, content: "answered on the website", cid: "web-turn")
+            api.chats["shared-chat"] = ChatConversation(id: "shared-chat", title: "Shared", messages: [phone, web, webAnswer])
+            await store.refreshSelectedConversation()
+            expect(store.selectedConversationID == "shared-chat" &&
+                   store.messages.map(\.content) == ["asked on the phone", "asked on the website", "answered on the website"],
+                   "(a) a turn saved on the website appears in the open chat without opening it again")
+            let reads = api.chatRequests.count
+            await store.refreshSelectedConversation()
+            expect(api.chatRequests.count == reads + 1 && store.messages.count == 3,
+                   "(a) a refresh that finds nothing new leaves the transcript as it is")
+        }
+        do {
+            let (session, api, store) = fixture()
+            session.isAuthenticated = false
+            session.identityID = "guest-refresh"
+            await store.loadConversations()
+            let reads = api.chatRequests.count
+            await store.refreshSelectedConversation()
+            expect(api.chatRequests.count == reads && store.selectedConversationID?.hasPrefix("guest-") == true,
+                   "(a) a guest's on-device transcript is never re-read from the server")
+        }
+        do {
+            let (_, api, store) = fixture()
+            api.listedChats = [summary("turns-into-code")]
+            await store.loadConversations()
+            api.delayedChatIDs = ["turns-into-code"]
+            let refresh = Task { await store.refreshSelectedConversation() }
+            try await waitUntil { api.pendingChats["turns-into-code"] != nil }
+            api.listedChats = [summary("turns-into-code", code: true)]
+            await store.loadConversations()
+            api.chats["turns-into-code"] = ChatConversation(id: "turns-into-code", title: "Project",
+                messages: [ChatMessage(role: .user, content: "project file", cid: "project-turn")])
+            api.resolveChat(id: "turns-into-code")
+            await refresh.value
+            expect(store.selectedConversationID == nil && store.messages.isEmpty,
+                   "(a) a chat the list marks as a Code project during the read is not refreshed back into Chat")
+        }
+        do {
+            let (session, api, store) = fixture()
+            await store.select("running-chat")
+            store.updateDraftText(exactDraft, expectedOwnerID: session.identityID, expectedIdentityGeneration: 0)
+            let snapshot = store.snapshotDraft()!
+            let cid = await store.send(text: exactDraft, tier: .pro, thinking: false, webSearch: false, language: .english)!
+            store.beginDraftSubmission(cid: cid, snapshot: snapshot)
+            try await waitUntil { api.pendingStarts.count == 1 }
+            let reads = api.chatRequests.count
+            await store.refreshSelectedConversation()
+            expect(api.chatRequests.count == reads && store.messages.last?.state == .sending && store.draftText == exactDraft,
+                   "(b) a chat with an answer running in it is not re-read, and the Send reservation stays")
+            api.resolveStart(jobID: "refresh-running-job", phase: .completed, text: "answer")
+            try await waitUntil { !store.isSending }
+            expect(store.lastAcceptedSend?.cid == cid && store.draftText.isEmpty,
+                   "(b) the reservation a refresh left alone is consumed by the acceptance")
+        }
+        do {
+            let (_, api, store) = fixture()
+            await store.select("receipt-chat")
+            _ = await store.send(text: "unconfirmed turn", tier: .pro, thinking: false, webSearch: false, language: .english)
+            try await waitUntil { api.pendingStarts.count == 1 }
+            api.receiptFailure = .transport(code: -1009, message: "synthetic offline")
+            api.failStart(APIError.transport(code: -1001, message: "synthetic timeout"))
+            try await waitUntil { store.canReconnectActiveJob }
+            let reads = api.chatRequests.count
+            let shown = store.messages
+            await store.refreshSelectedConversation()
+            expect(api.chatRequests.count == reads && store.messages == shown,
+                   "(b) a chat whose saved receipt is still unconfirmed is left to Reconnect")
+        }
+        do {
+            let (_, api, store) = fixture()
+            await store.select("first-open")
+            api.delayedChatIDs = ["first-open"]
+            let refresh = Task { await store.refreshSelectedConversation() }
+            try await waitUntil { api.pendingChats["first-open"] != nil }
+            await store.select("chosen-later")
+            api.chats["first-open"] = ChatConversation(id: "first-open", title: "Late",
+                messages: [ChatMessage(role: .user, content: "late read", cid: "late-turn")])
+            api.resolveChat(id: "first-open")
+            await refresh.value
+            expect(store.selectedConversationID == "chosen-later" && store.messages.isEmpty,
+                   "(c) a chat chosen during the read wins over the late refresh")
+        }
+        do {
+            let (_, api, store) = fixture()
+            api.listedChats = [summary("deleting-open"), summary("next-ordinary")]
+            await store.select("deleting-open")
+            await store.loadConversations()
+            api.delayedChatIDs = ["deleting-open"]
+            let refresh = Task { await store.refreshSelectedConversation() }
+            try await waitUntil { api.pendingChats["deleting-open"] != nil }
+            let request = store.deletionRequest(id: "deleting-open", title: "Deleting")!
+            api.delayDeletion = true
+            let deletion = Task { await store.delete(request, language: .english) }
+            try await waitUntil { api.pendingDeletions["deleting-open"] != nil }
+            api.chats["deleting-open"] = ChatConversation(id: "deleting-open", title: "Deleted",
+                messages: [ChatMessage(role: .user, content: "must not return", cid: "deleted-turn")])
+            api.resolveChat(id: "deleting-open")
+            await refresh.value
+            expect(store.messages.isEmpty, "(c) a chat being deleted is not refreshed")
+            api.resolveDeletion(id: "deleting-open")
+            _ = await deletion.value
+            expect(store.selectedConversationID == "next-ordinary",
+                   "(c) the deletion still settles on the next ordinary chat")
+        }
+        do {
+            let (session, api, store) = fixture()
+            await store.select("failed-chat")
+            store.updateDraftText(exactDraft, expectedOwnerID: session.identityID, expectedIdentityGeneration: 0)
+            let snapshot = store.snapshotDraft()!
+            let cid = await store.send(text: exactDraft, tier: .pro, thinking: false, webSearch: false, language: .english)!
+            store.beginDraftSubmission(cid: cid, snapshot: snapshot)
+            try await waitUntil { api.pendingStarts.count == 1 }
+            api.failStart(APIError.httpStatus(400, nil))
+            try await waitUntil { !store.isSending }
+            // The failed turn's question was saved before the POST; its answer never was.
+            api.chats["failed-chat"]?.messages.append(ChatMessage(role: .user, content: "added on the website", cid: "web-later"))
+            await store.refreshSelectedConversation()
+            let failedIndex = store.messages.firstIndex { $0.role == .assistant && $0.cid == cid }
+            let questionIndex = store.messages.firstIndex { $0.role == .user && $0.cid == cid }
+            expect(failedIndex != nil && store.messages[failedIndex!].state == .failed &&
+                   questionIndex.map { $0 + 1 } == failedIndex &&
+                   store.messages.last?.content == "added on the website",
+                   "(d) a local failed answer stays beside its saved question while the website turn arrives")
+            expect(store.draftText == exactDraft && api.starts.count == 1,
+                   "(d) a refresh never touches the editable draft and never sends anything")
+        }
+        do {
+            let (_, api, store) = fixture()
+            api.listedChats = [summary("notice-chat")]
+            await store.loadConversations()
+            store.errorMessage = "Synthetic daily limit notice"
+            api.listedChats = [summary("notice-chat"), summary("added-elsewhere")]
+            await store.loadConversations(clearsError: false)
+            expect(store.errorMessage == "Synthetic daily limit notice" &&
+                   store.conversations.map(\.id) == ["notice-chat", "added-elsewhere"] &&
+                   store.selectedConversationID == "notice-chat",
+                   "(e) the return from the background re-reads the list and keeps the notice on screen")
+            await store.loadConversations()
+            expect(store.errorMessage == nil, "(e) a read the reader asked for still clears the notice")
+        }
+        print("CLEAN:\(checks) production ChatStore race/history/pin/delete/admission checks")
     }
 
     private static func waitUntil(_ predicate: () -> Bool) async throws {

@@ -116,8 +116,9 @@ private actor GeminiLiveTransport {
         self.handler = handler
     }
 
-    func connect(with token: LiveVoiceToken, language: AppLanguage) async throws {
-        guard socket == nil else { return }
+    func connect(with token: LiveVoiceToken, language: AppLanguage, voiceName: String) async throws {
+        // Single use: a call ended before this ran must not open a socket.
+        guard socket == nil, !closed else { return }
         guard var components = URLComponents(
             string: "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained"
         ) else {
@@ -132,10 +133,9 @@ private actor GeminiLiveTransport {
         let socket = session.webSocketTask(with: url)
         self.session = session
         self.socket = socket
-        closed = false
         socket.resume()
 
-        try await sendSetup(model: token.model, language: language)
+        try await sendSetup(model: token.model, language: language, voiceName: voiceName)
 
         let ceiling = max(10_000, token.maxMs - 1_500)
         hardLimitTask = Task { [weak self] in
@@ -172,7 +172,7 @@ private actor GeminiLiveTransport {
         await finish(notify: false)
     }
 
-    private func sendSetup(model: String, language: AppLanguage) async throws {
+    private func sendSetup(model: String, language: AppLanguage, voiceName: String) async throws {
         guard let socket else { throw APIError.invalidResponse }
         let interfaceLanguage = language == .arabic ? "Arabic" : "English"
         let instruction = """
@@ -188,7 +188,7 @@ private actor GeminiLiveTransport {
                     "responseModalities": ["AUDIO"],
                     "speechConfig": [
                         "voiceConfig": [
-                            "prebuiltVoiceConfig": ["voiceName": "Charon"],
+                            "prebuiltVoiceConfig": ["voiceName": voiceName],
                         ],
                     ],
                 ],
@@ -304,7 +304,9 @@ final class LiveVoiceController {
     private(set) var startedAt: Date?
     private(set) var maximumDuration: Duration?
     private(set) var isMuted = false
+    /// Read back from the session's current route, never assumed.
     private(set) var usesSpeaker = true
+    private(set) var usesReceiver = false
 
     @ObservationIgnored private let tokenClient: LiveVoiceTokenClient
     @ObservationIgnored private var transport: GeminiLiveTransport?
@@ -312,13 +314,14 @@ final class LiveVoiceController {
     @ObservationIgnored private let player = AVAudioPlayerNode()
     @ObservationIgnored private var speechSettleTask: Task<Void, Never>?
     @ObservationIgnored private var outputDrainTask: Task<Void, Never>?
+    @ObservationIgnored private var routeRecoveryTask: Task<Void, Never>?
     @ObservationIgnored private var didInstallTap = false
 
     init(configuration: AppConfiguration = .live) {
         tokenClient = LiveVoiceTokenClient(baseURL: configuration.apiBaseURL)
     }
 
-    func start(language: AppLanguage, voice: String) async {
+    func start(language: AppLanguage, voice: CallVoice) async {
         guard connectionState == .idle || connectionState == .ended else { return }
         connectionState = .requestingPermission
 
@@ -335,9 +338,19 @@ final class LiveVoiceController {
                 self?.handle(event)
             }
             self.transport = transport
-            let token = try await tokenClient.mint(voice: voice)
+            let token = try await tokenClient.mint(voice: voice.rawValue)
+            // Ended while the token was minting: opening the microphone now
+            // would start a call nobody is on.
+            guard !Task.isCancelled, connectionState == .connecting, self.transport === transport else {
+                return
+            }
             try startAudioGraph(transport: transport)
-            try await transport.connect(with: token, language: language)
+            applyDefaultRoute()
+            try await transport.connect(
+                with: token,
+                language: language,
+                voiceName: Self.geminiVoiceName(for: voice)
+            )
         } catch {
             await stopAudioAndTransport()
             connectionState = .failed(Self.safeMessage(for: error))
@@ -350,15 +363,14 @@ final class LiveVoiceController {
         Task { await transport?.setMuted(muted) }
     }
 
+    /// Off returns to the route the system picks: the headphones when they are
+    /// connected, otherwise the earpiece. A refused switch leaves the call
+    /// running and the button showing where the audio really is.
     func toggleSpeaker() {
-        usesSpeaker.toggle()
-        do {
-            try AVAudioSession.sharedInstance().overrideOutputAudioPort(
-                usesSpeaker ? .speaker : .none
-            )
-        } catch {
-            connectionState = .failed("voice_audio_route_failed")
-        }
+        try? AVAudioSession.sharedInstance().overrideOutputAudioPort(
+            usesSpeaker ? .none : .speaker
+        )
+        refreshRoute()
     }
 
     func end() async {
@@ -368,6 +380,46 @@ final class LiveVoiceController {
 
     func handleInterruption() async {
         await end()
+    }
+
+    /// Headphones that arrive mid-call take the call, as they do on a phone
+    /// call; when they leave and nothing external remains, the call returns to
+    /// the loudspeaker. A hardware change can stop the engine, so it is checked.
+    func handleRouteChange(reason: AVAudioSession.RouteChangeReason) {
+        guard connectionState == .connecting || connectionState == .connected else { return }
+        let session = AVAudioSession.sharedInstance()
+        switch reason {
+        case .newDeviceAvailable:
+            try? session.overrideOutputAudioPort(.none)
+        case .oldDeviceUnavailable:
+            if !Self.hasExternalOutput(session.currentRoute) {
+                try? session.overrideOutputAudioPort(.speaker)
+            }
+        default:
+            break
+        }
+        refreshRoute()
+        if !audioEngine.isRunning {
+            recoverAudioGraph()
+        }
+    }
+
+    /// AVAudioEngine stops itself when the hardware format changes (built-in
+    /// 48 kHz to Bluetooth HFP, for example) and posts this notification.
+    func handleEngineConfigurationChange(_ object: Any?) {
+        guard (object as? AVAudioEngine) === audioEngine,
+              connectionState == .connecting || connectionState == .connected,
+              !audioEngine.isRunning
+        else { return }
+        recoverAudioGraph()
+    }
+
+    /// The audio daemon restarted: every audio object this call holds is
+    /// invalid, so the call is shown as lost rather than as silently connected.
+    func handleMediaServicesReset() {
+        guard connectionState == .connecting || connectionState == .connected else { return }
+        connectionState = .failed("voice_connection_lost")
+        Task { await stopAudioAndTransport() }
     }
 
     private func handle(_ event: GeminiLiveEvent) {
@@ -404,8 +456,14 @@ final class LiveVoiceController {
     }
 
     private func startAudioGraph(transport: GeminiLiveTransport) throws {
-        let session = AVAudioSession.sharedInstance()
         let inputNode = audioEngine.inputNode
+        // Echo cancellation. Without Apple's voice processing the microphone
+        // hears the loudspeaker and Gemini interrupts its own answer. It must be
+        // on before the format is read: it can change the input's channels.
+        // A device that refuses it still gets the call, without cancellation.
+        if !inputNode.isVoiceProcessingEnabled {
+            try? inputNode.setVoiceProcessingEnabled(true)
+        }
         let inputFormat = inputNode.outputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
             throw APIError.invalidResponse
@@ -433,7 +491,61 @@ final class LiveVoiceController {
         didInstallTap = true
         audioEngine.prepare()
         try audioEngine.start()
-        try session.overrideOutputAudioPort(usesSpeaker ? .speaker : .none)
+    }
+
+    /// The loudspeaker only when nothing external (AirPods, Bluetooth, wired,
+    /// car) is connected; otherwise the system's own choice stands.
+    private func applyDefaultRoute() {
+        let session = AVAudioSession.sharedInstance()
+        if !Self.hasExternalOutput(session.currentRoute) {
+            try? session.overrideOutputAudioPort(.speaker)
+        }
+        refreshRoute()
+    }
+
+    private func refreshRoute() {
+        let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
+        usesSpeaker = outputs.contains { $0.portType == .builtInSpeaker }
+        usesReceiver = outputs.contains { $0.portType == .builtInReceiver }
+    }
+
+    /// Rebuilds the stopped graph against the new hardware format. A Bluetooth
+    /// route can still be settling when the first notice arrives, so it gets
+    /// three tries before the call is shown as failed instead of connected.
+    private func recoverAudioGraph() {
+        guard didInstallTap, transport != nil, routeRecoveryTask == nil else { return }
+        routeRecoveryTask = Task { [weak self] in
+            for delay in [0, 250, 750] {
+                if delay > 0 {
+                    try? await Task.sleep(for: .milliseconds(delay))
+                }
+                guard let self, !Task.isCancelled, let transport = self.transport else { return }
+                if self.restartAudioGraph(transport: transport) {
+                    self.routeRecoveryTask = nil
+                    return
+                }
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.routeRecoveryTask = nil
+            self.connectionState = .failed("voice_audio_route_failed")
+            await self.stopAudioAndTransport()
+        }
+    }
+
+    private func restartAudioGraph(transport: GeminiLiveTransport) -> Bool {
+        if didInstallTap {
+            audioEngine.inputNode.removeTap(onBus: 0)
+            didInstallTap = false
+        }
+        player.stop()
+        audioEngine.stop()
+        do {
+            try startAudioGraph(transport: transport)
+            refreshRoute()
+            return true
+        } catch {
+            return false
+        }
     }
 
     private func schedulePlayback(_ data: Data) {
@@ -502,16 +614,21 @@ final class LiveVoiceController {
     private func stopAudioAndTransport() async {
         speechSettleTask?.cancel()
         outputDrainTask?.cancel()
+        routeRecoveryTask?.cancel()
         speechSettleTask = nil
         outputDrainTask = nil
+        routeRecoveryTask = nil
         if didInstallTap {
             audioEngine.inputNode.removeTap(onBus: 0)
             didInstallTap = false
         }
         player.stop()
         audioEngine.stop()
-        await transport?.close()
+        // Cleared before the await, so a start() resuming meanwhile sees the
+        // call is over instead of opening the microphone.
+        let closing = transport
         transport = nil
+        await closing?.close()
         audioLevel = 0
         try? AVAudioSession.sharedInstance().setActive(
             false,
@@ -521,10 +638,14 @@ final class LiveVoiceController {
 
     private func configureAudioSession() throws {
         let session = AVAudioSession.sharedInstance()
+        // No .defaultToSpeaker: with it an override to .none still lands on the
+        // loudspeaker, so the speaker button could never turn it off. The
+        // loudspeaker is chosen in applyDefaultRoute() instead. HFP outranks
+        // A2DP on a device that has both, so AirPods keep their microphone.
         try session.setCategory(
             .playAndRecord,
             mode: .voiceChat,
-            options: [.defaultToSpeaker, .allowBluetoothHFP]
+            options: [.allowBluetoothHFP, .allowBluetoothA2DP]
         )
         try session.setPreferredIOBufferDuration(0.01)
         try session.setActive(true)
@@ -587,6 +708,27 @@ final class LiveVoiceController {
                 sum += value * value
             }
             return min(1, sqrt(sum / Double(max(1, values.count / 4))))
+        }
+    }
+
+    private static func hasExternalOutput(_ route: AVAudioSessionRouteDescription) -> Bool {
+        route.outputs.contains {
+            $0.portType != .builtInSpeaker && $0.portType != .builtInReceiver
+        }
+    }
+
+    /// The Call voice setting carries OpenAI's names, but this call runs on
+    /// Gemini Live, whose setup takes one of its own prebuilt voices. Each
+    /// choice maps, in order, onto the first five of the web client's
+    /// LIVE_VOICES, so cedar, the default, keeps Charon. Mapped by position,
+    /// not by sound: the owner may reorder these by ear.
+    private static func geminiVoiceName(for voice: CallVoice) -> String {
+        switch voice {
+        case .cedar: "Charon"
+        case .ash: "Sadaltager"
+        case .verse: "Achird"
+        case .echo: "Umbriel"
+        case .ballad: "Algieba"
         }
     }
 

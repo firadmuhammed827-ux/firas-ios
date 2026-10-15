@@ -60,6 +60,7 @@ private struct UserMessageRow: View {
         .sheet(item: $selectedImage) { preview in
             ChatImagePreview(image: preview.image, source: preview.source)
                 .id(preview.id)
+                .dynamicTypeSize(preferences.resolvedTypeSize)
         }
     }
 }
@@ -432,25 +433,30 @@ private struct ChatFormattedText: View {
         let fillsWidth: Bool
         /// Levels 1 and 2; deeper headings are the body font, semibold.
         let titleFont: Font
+        /// A display formula, one step larger than the body.
+        let mathFont: Font
 
         func headingFont(_ level: Int) -> Font {
             level <= 2 ? titleFont : font.weight(.semibold)
         }
 
         static func message(color: Color) -> Style {
-            Style(font: .body, color: color, fillsWidth: false, titleFont: .title3.weight(.semibold))
+            Style(font: .body, color: color, fillsWidth: false, titleFont: .title3.weight(.semibold), mathFont: .title3)
         }
 
         static func assistant(color: Color) -> Style {
-            Style(font: .body, color: color, fillsWidth: true, titleFont: .title3.weight(.semibold))
+            Style(font: .body, color: color, fillsWidth: true, titleFont: .title3.weight(.semibold), mathFont: .title3)
         }
 
         static func reasoning(color: Color) -> Style {
-            Style(font: .subheadline, color: color, fillsWidth: true, titleFont: .subheadline.weight(.semibold))
+            Style(
+                font: .subheadline, color: color, fillsWidth: true,
+                titleFont: .subheadline.weight(.semibold), mathFont: .body
+            )
         }
 
         static func system(color: Color) -> Style {
-            Style(font: .caption, color: color, fillsWidth: true, titleFont: .caption.weight(.semibold))
+            Style(font: .caption, color: color, fillsWidth: true, titleFont: .caption.weight(.semibold), mathFont: .footnote)
         }
     }
 }
@@ -479,9 +485,9 @@ private struct ChatTextBlockView: View {
     private var content: some View {
         switch segment.kind {
         case .paragraph(let pieces):
-            ChatTextPieces(pieces: pieces, font: style.font, color: style.color)
+            ChatTextPieces(pieces: pieces, font: style.font, style: style)
         case .heading(let level, let pieces):
-            ChatTextPieces(pieces: pieces, font: style.headingFont(level), color: style.color)
+            ChatTextPieces(pieces: pieces, font: style.headingFont(level), style: style)
                 .accessibilityAddTraits(.isHeader)
         case .listItem(let marker, let depth, let pieces):
             HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -500,11 +506,11 @@ private struct ChatTextBlockView: View {
                 .foregroundStyle(style.color)
                 .frame(minWidth: 20, alignment: .trailing)
                 .accessibilityHidden(marker.isEmpty)
-                ChatTextPieces(pieces: pieces, font: style.font, color: style.color)
+                ChatTextPieces(pieces: pieces, font: style.font, style: style)
             }
             .padding(.leading, CGFloat(min(depth, 4)) * 20)
         case .quote(let pieces):
-            ChatTextPieces(pieces: pieces, font: style.font, color: style.color)
+            ChatTextPieces(pieces: pieces, font: style.font, style: style)
                 .padding(.leading, 12)
                 .overlay(alignment: .leading) {
                     Capsule()
@@ -525,22 +531,29 @@ private struct ChatTextBlockView: View {
     }
 }
 
+/// A block's text. Inline formulas stay inside their sentence as one Text;
+/// only a display formula takes a line of its own.
 private struct ChatTextPieces: View {
     let pieces: [ChatTextPiece]
     let font: Font
-    let color: Color
+    let style: ChatFormattedText.Style
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            ForEach(pieces) { piece in
-                switch piece.kind {
-                case .markdown(_, let attributed):
+            ForEach(ChatTextParser.lines(pieces)) { line in
+                switch line.kind {
+                case .text(let attributed):
                     Text(attributed)
                         .font(font)
-                        .foregroundStyle(color)
+                        .foregroundStyle(style.color)
                         .fixedSize(horizontal: false, vertical: true)
-                case .math(let value, let inline):
-                    ChatMathBlock(value: value, inline: inline)
+                case .display(let formula):
+                    ChatDisplayMath(
+                        formula: formula,
+                        font: style.mathFont,
+                        color: style.color,
+                        fillsWidth: style.fillsWidth
+                    )
                 }
             }
         }
@@ -613,29 +626,35 @@ private struct ChatTableBlock: View {
     }
 }
 
-private struct ChatMathBlock: View {
-    let value: String
-    let inline: Bool
-
-    @Environment(PreferencesStore.self) private var preferences
+/// A display formula owns its line: readable Unicode in the reading font,
+/// centred, left to right inside an Arabic answer, and scrolled sideways
+/// rather than wrapped when it is wider than the column.
+private struct ChatDisplayMath: View {
+    let formula: String
+    let font: Font
+    let color: Color
+    /// A user bubble hugs its text, so the formula is not stretched there.
+    let fillsWidth: Bool
 
     var body: some View {
-        Group {
-            Text(value)
-                .font(inline ? .system(.footnote, design: .monospaced) : .system(.body, design: .monospaced))
-                .padding(.horizontal, inline ? 8 : 12)
-                .padding(.vertical, inline ? 2 : 8)
-                .frame(maxWidth: inline ? nil : .infinity, alignment: .leading)
-                .environment(\.layoutDirection, .leftToRight)
+        ViewThatFits(in: .horizontal) {
+            line
+            ScrollView(.horizontal) {
+                line
+                    .padding(.bottom, 2)
+            }
         }
-        .foregroundStyle(preferences.palette.textPrimary)
-        .background(
-            preferences.palette.surfaceSunken.opacity(0.55),
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(preferences.palette.border, lineWidth: 1)
-        }
+        .frame(maxWidth: fillsWidth ? CGFloat.infinity : nil)
+        .padding(.vertical, 4)
+        .environment(\.layoutDirection, .leftToRight)
+    }
+
+    private var line: some View {
+        // Every line starts left to right, even one of symbols alone.
+        Text(verbatim: "\u{200E}" + formula.replacingOccurrences(of: "\n", with: "\n\u{200E}"))
+            .font(font)
+            .foregroundStyle(color)
+            .multilineTextAlignment(.center)
+            .fixedSize()
     }
 }

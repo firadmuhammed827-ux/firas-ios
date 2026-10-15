@@ -21,13 +21,14 @@ nonisolated enum APIError: Error, Equatable, LocalizedError, Sendable {
     var errorDescription: String? {
         switch self {
         case .invalidURL:
-            "The API URL is invalid."
+            Self.appText("عنوان الخادم غير صالح.", "The API URL is invalid.")
         case .invalidRequest(let message):
             message
         case .transport(_, let message):
             message
         case .invalidResponse:
-            "The server returned an invalid response."
+            Self.appText("وصل ردّ غير متوقع من الخادم. أعد المحاولة بعد قليل.",
+                         "The server sent an unexpected response. Try again shortly.")
         case .httpStatus(_, let message):
             message
         case .skillValidation:
@@ -43,6 +44,12 @@ nonisolated enum APIError: Error, Equatable, LocalizedError, Sendable {
         if case .skillValidation = self { return 400 }
         guard case .httpStatus(let code, _) = self else { return nil }
         return code
+    }
+
+    /// The app's fixed sentences follow the language Settings saved, since
+    /// several screens show them as they are.
+    fileprivate static func appText(_ arabic: String, _ english: String) -> String {
+        UserDefaults.standard.string(forKey: "lang") == "en" ? english : arabic
     }
 }
 
@@ -177,7 +184,7 @@ actor APIClient {
         do {
             data = try encoder.encode(body)
         } catch {
-            throw APIError.encoding("The request could not be encoded.")
+            throw APIError.encoding(APIError.appText("تعذّر تجهيز الطلب للإرسال.", "The request could not be encoded."))
         }
         if let maximumBodyBytes, data.count > maximumBodyBytes {
             throw APIError.invalidRequest("media_history_too_large")
@@ -234,7 +241,8 @@ actor APIClient {
         do {
             return try decoder.decode(Response.self, from: data)
         } catch {
-            throw APIError.decoding("The server response did not match the expected format.")
+            throw APIError.decoding(APIError.appText("وصل ردّ من الخادم بصيغة غير متوقعة. أعد المحاولة بعد قليل.",
+                                                     "The server response did not match the expected format."))
         }
     }
 
@@ -269,12 +277,29 @@ actor APIClient {
             }
             var message = envelope?.error
                 ?? HTTPURLResponse.localizedString(forStatusCode: response.statusCode)
+            // A few fixed server phrases name a limit or a session. Under a
+            // scope (media and chat jobs) they cross as their code, so the
+            // reader is told which; any other text still becomes the fixed
+            // code below, so an upstream body never does.
+            if MediaCredentialScope.current != nil, let code = scopedServerCode(message) {
+                message = code
+            }
             if MediaCredentialScope.current != nil, !message.utf8.allSatisfy({
                 (97...122).contains($0) || (48...57).contains($0) || $0 == 95
             }) || message.utf8.count > 80 {
                 message = "media_request_failed"
             }
             throw APIError.httpStatus(code: response.statusCode, message: message)
+        }
+    }
+
+    private func scopedServerCode(_ message: String) -> String? {
+        switch message {
+        case "daily quota reached": return "daily_quota_reached"
+        case "guest daily limit reached": return "guest_daily_limit_reached"
+        case "too many requests": return "too_many_requests"
+        case "authentication required": return "authentication_required"
+        default: return nil
         }
     }
 

@@ -1,3 +1,4 @@
+import Accessibility
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -9,6 +10,7 @@ struct BrainScreen: View {
 
     @Environment(PreferencesStore.self) private var preferences
     @Environment(SessionStore.self) private var session
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
     @State private var query = ""
     @State private var showsImporter = false
     @State private var pendingDelete: BrainDocument?
@@ -63,6 +65,7 @@ struct BrainScreen: View {
                 .environment(preferences)
                 .environment(\.locale, preferences.language.locale)
                 .environment(\.layoutDirection, preferences.language.layoutDirection)
+                .dynamicTypeSize(preferences.resolvedTypeSize)
             }
         }
         .alert(deleteAlertTitle, isPresented: deleteAlertBinding) {
@@ -80,6 +83,11 @@ struct BrainScreen: View {
             if let pendingDelete {
                 Text(verbatim: pendingDelete.title)
             }
+        }
+        // VoiceOver hears each new error banner, as it does in Chat.
+        .onChange(of: store.errorMessage) { _, message in
+            guard voiceOverEnabled, let message, !message.isEmpty else { return }
+            AccessibilityNotification.Announcement(AttributedString(message)).post()
         }
     }
 
@@ -385,8 +393,11 @@ struct BrainScreen: View {
         switch result {
         case .success(let urls):
             store.importDocuments(urls, language: preferences.language)
-        case .failure(let error):
-            store.errorMessage = error.localizedDescription
+        case .failure:
+            // The system's own sentence follows the device, not the app language.
+            store.errorMessage = preferences.language == .arabic
+                ? "تعذّر فتح الملفات المختارة. أعد المحاولة."
+                : "The selected files could not be opened. Try again."
         }
     }
 
@@ -560,25 +571,37 @@ private struct BrainHitCard: View {
                             .padding(.horizontal, 8)
                             .frame(minHeight: 28)
                             .background(preferences.palette.accent.opacity(0.10), in: Capsule())
+                            // The chip's "ص"/"p" is an abbreviation; VoiceOver says the word.
+                            .accessibilityLabel(Text(BrainStrings.page) + Text(verbatim: " \(pageNumber)"))
                     }
+                    // The passage is the document's own text, so its script,
+                    // not the app language, sets the side it starts from.
                     Text(verbatim: hit.text)
                         .font(.body)
                         .foregroundStyle(preferences.palette.textSecondary)
                         .multilineTextAlignment(.leading)
                         .lineLimit(6)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .environment(\.layoutDirection,
+                                     LayoutDirection.ofContent(hit.text, fallback: preferences.language.layoutDirection))
                 }
                 .padding(15)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(Text(BrainStrings.openPassage))
+        // One element that reads the source, its page and the passage. Opening
+        // the original passage is what the button does, so it is the hint, not
+        // a label that would replace everything the result says.
+        .accessibilityElement(children: .combine)
+        .accessibilityHint(Text(BrainStrings.openPassage))
     }
+
+    private var pageNumber: String { hit.label ?? String(hit.page) }
 
     private var pageLabel: String {
         let prefix = preferences.language == .arabic ? "ص" : "p"
-        return "\(prefix) \(hit.label ?? String(hit.page))"
+        return "\(prefix) \(pageNumber)"
     }
 }
 
@@ -604,6 +627,9 @@ private struct BrainPassageSheet: View {
                                 .textSelection(.enabled)
                                 .padding(15)
                                 .frame(maxWidth: .infinity, alignment: .leading)
+                                // Each segment reads in its own script's direction.
+                                .environment(\.layoutDirection,
+                                             LayoutDirection.ofContent(segment.text, fallback: preferences.language.layoutDirection))
                                 .background(
                                     segment.isFocus
                                         ? preferences.palette.accent.opacity(0.09)

@@ -18,6 +18,10 @@ struct AuthView: View {
     @State private var isContinuingAsGuest = false
     @State private var isGoogleWorking = false
     @State private var didReportEntry = false
+    // Set by this sheet's own sign-in controls. A failed restore or guest
+    // start leaves the phase at .restoring, so a sign-in after it changes the
+    // phase exactly as a finishing restore does; only this tells them apart.
+    @State private var didRequestSignIn = false
 
     init(
         onContinueAsGuest: @escaping () -> Void = {},
@@ -39,20 +43,25 @@ struct AuthView: View {
                         AuthHeader()
 
                         if session.isAuthenticated, let user = session.user {
+                            // Closing on a member who was already signed in
+                            // is not an entry, so the intro does not replay.
                             AuthenticatedCard(user: user) {
-                                reportEntry(.authenticated(user))
                                 dismiss()
                             }
                         } else if let pendingSignup = session.pendingSignup,
                                   !hidesPendingSignup {
-                            VerificationCard(email: pendingSignup.email) {
+                            VerificationCard(
+                                email: pendingSignup.email,
+                                didRequestSignIn: $didRequestSignIn
+                            ) {
                                 session.errorMessage = nil
                                 hidesPendingSignup = true
                             }
                         } else {
                             CredentialsCard(
                                 googleOAuthProvider: googleOAuthProvider,
-                                isGoogleWorking: $isGoogleWorking
+                                isGoogleWorking: $isGoogleWorking,
+                                didRequestSignIn: $didRequestSignIn
                             )
 
                             if session.pendingSignup != nil, hidesPendingSignup {
@@ -68,20 +77,24 @@ struct AuthView: View {
                             }
                         }
 
-                        Button(action: continueAsGuest) {
-                            HStack(spacing: 8) {
-                                if isContinuingAsGuest {
-                                    ProgressView()
-                                        .controlSize(.small)
+                        // A member has no guest to continue as; the tap would
+                        // only start a new session and retire sends being prepared.
+                        if !session.isAuthenticated {
+                            Button(action: continueAsGuest) {
+                                HStack(spacing: 8) {
+                                    if isContinuingAsGuest {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                    }
+                                    Text("auth.continueGuest")
+                                        .font(.body.weight(.medium))
                                 }
-                                Text("auth.continueGuest")
-                                    .font(.body.weight(.medium))
+                                .frame(minHeight: 44)
                             }
-                            .frame(minHeight: 44)
+                            .buttonStyle(.plain)
+                            .foregroundStyle(preferences.palette.textSecondary)
+                            .disabled(session.isWorking || isGoogleWorking)
                         }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(preferences.palette.textSecondary)
-                        .disabled(session.isWorking || isGoogleWorking)
 
                         Label("auth.secure", systemImage: "lock.shield")
                             .font(.caption)
@@ -113,16 +126,23 @@ struct AuthView: View {
         .preferredColorScheme(preferences.theme.isLight ? .light : .dark)
         .environment(\.locale, preferences.language.locale)
         .environment(\.layoutDirection, preferences.language.layoutDirection)
+        // Re-applied here because a sheet is not guaranteed to inherit the
+        // root's size.
+        .dynamicTypeSize(preferences.resolvedTypeSize)
         .presentationSizing(.form)
         .task {
             guard case .restoring = session.phase else { return }
             await session.restore()
         }
-        .onChange(of: session.isAuthenticated) {
-            if session.isAuthenticated, let user = session.user {
+        // Only a sign-in made while this sheet is open reports an entry, which
+        // the shell greets with the intro. A saved session that finishes
+        // restoring here closes the sheet quietly: nobody signed in.
+        .onChange(of: session.phase) { oldPhase, _ in
+            guard session.isAuthenticated, let user = session.user else { return }
+            if didRequestSignIn || oldPhase != .restoring {
                 reportEntry(.authenticated(user))
-                dismiss()
             }
+            dismiss()
         }
         .onChange(of: session.pendingSignup) { oldValue, newValue in
             if oldValue?.pid != newValue?.pid {
@@ -272,6 +292,7 @@ private struct AuthModeSelector: View {
 private struct CredentialsCard: View {
     let googleOAuthProvider: GoogleOAuthProvider?
     @Binding var isGoogleWorking: Bool
+    @Binding var didRequestSignIn: Bool
 
     @Environment(PreferencesStore.self) private var preferences
     @Environment(SessionStore.self) private var session
@@ -423,6 +444,7 @@ private struct CredentialsCard: View {
                             .font(.headline)
                     }
                     .frame(maxWidth: .infinity, minHeight: 48)
+                    .accentFilledLabel()
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(preferences.palette.accent)
@@ -447,6 +469,7 @@ private struct CredentialsCard: View {
         focusedField = nil
         session.errorMessage = nil
         googleFeedback = nil
+        didRequestSignIn = true
 
         Task {
             switch mode {
@@ -474,6 +497,7 @@ private struct CredentialsCard: View {
             return
         }
 
+        didRequestSignIn = true
         isGoogleWorking = true
         Task { @MainActor in
             defer { isGoogleWorking = false }
@@ -564,6 +588,7 @@ private struct AuthDivider: View {
 
 private struct VerificationCard: View {
     let email: String
+    @Binding var didRequestSignIn: Bool
     let useAnotherAccount: () -> Void
 
     @Environment(PreferencesStore.self) private var preferences
@@ -603,6 +628,7 @@ private struct VerificationCard: View {
 
                 Button {
                     session.errorMessage = nil
+                    didRequestSignIn = true
                     Task {
                         await session.checkVerification()
                     }
@@ -619,6 +645,7 @@ private struct VerificationCard: View {
                             .font(.headline)
                     }
                     .frame(maxWidth: .infinity, minHeight: 48)
+                    .accentFilledLabel()
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(preferences.palette.accent)
@@ -663,9 +690,13 @@ private struct AuthenticatedCard: View {
                 }
                 .accessibilityElement(children: .combine)
 
-                Button("common.done", action: done)
-                    .buttonStyle(.borderedProminent)
-                    .frame(minHeight: 44)
+                Button(action: done) {
+                    Text("common.done")
+                        .accentFilledLabel()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(preferences.palette.accent)
+                .frame(minHeight: 44)
             }
             .padding(22)
             .frame(maxWidth: .infinity)
@@ -729,8 +760,32 @@ private struct AuthFieldModifier: ViewModifier {
     }
 }
 
+/// The label of an accent-filled button takes onAccent while it can be
+/// pressed: 5.2:1 or more in every theme, where the system white measures
+/// 2.3-2.6:1 on the dark themes. A disabled button keeps the system's own
+/// dimmed label, as SettingsSubmitButton does. The state is read from the
+/// button's own `.disabled`, so the two cannot drift apart.
+private struct AccentFilledLabelModifier: ViewModifier {
+    @Environment(PreferencesStore.self) private var preferences
+    @Environment(\.isEnabled) private var isEnabled
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content
+                .foregroundStyle(preferences.palette.onAccent)
+        } else {
+            content
+        }
+    }
+}
+
 private extension View {
     func authFieldStyle(isInvalid: Bool = false) -> some View {
         modifier(AuthFieldModifier(isInvalid: isInvalid))
+    }
+
+    func accentFilledLabel() -> some View {
+        modifier(AccentFilledLabelModifier())
     }
 }

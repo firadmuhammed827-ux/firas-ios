@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Native recreation of the MentronX lockup shown by the web product when an
 /// account is opened. It deliberately plays at meaningful entry moments rather
@@ -13,6 +14,7 @@ struct MentronXEntryView: View {
     @State private var crossProgress: CGFloat = 0
     @State private var lockupVisible = false
     @State private var isVisible = true
+    @State private var didFinish = false
 
     var body: some View {
         ZStack {
@@ -49,11 +51,45 @@ struct MentronXEntryView: View {
                     )
                 }
             }
+            // A fixed lockup; on an Arabic device it would read "MentronX BY".
+            .environment(\.layoutDirection, .leftToRight)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(Text(verbatim: "BY MentronX"))
+            .accessibilityHint(Text(ShellStrings.skipIntroHint))
+            // Double-tap or the escape scrub ends it, as a tap does.
+            .accessibilityAction(.default) { finish() }
+            .accessibilityAction(.escape) { finish() }
         }
         .opacity(isVisible ? 1 : 0)
+        // A greeting, never a wait: one tap anywhere ends it at once. The
+        // shape replaces the hit area of everything inside it, so it comes
+        // BEFORE ignoresSafeArea, whose content is laid out on the full
+        // screen; after it, the shape would cover only the safe area and the
+        // status bar, home indicator and landscape margins would pass taps
+        // to the app underneath.
+        .contentShape(Rectangle())
+        .onTapGesture { finish() }
+        .ignoresSafeArea()
+        .environment(\.locale, preferences.language.locale)
+        // While it covers the app, VoiceOver stays on it.
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(.isModal)
+        .onAppear {
+            UIAccessibility.post(notification: .screenChanged, argument: nil)
+        }
         .task { await play() }
+    }
+
+    /// Ends the intro once, whether it ran its course or was tapped away.
+    /// A tap fades it out rather than cutting it; with motion off it ends at once.
+    private func finish() {
+        guard !didFinish else { return }
+        didFinish = true
+        if reduceMotion || !preferences.motionEnabled {
+            onFinished()
+        } else {
+            withAnimation(.easeOut(duration: 0.2)) { onFinished() }
+        }
     }
 
     private func play() async {
@@ -63,7 +99,7 @@ struct MentronXEntryView: View {
             lockupVisible = true
             try? await Task.sleep(for: .milliseconds(900))
             guard !Task.isCancelled else { return }
-            onFinished()
+            finish()
             return
         }
 
@@ -91,7 +127,7 @@ struct MentronXEntryView: View {
 
         try? await Task.sleep(for: .milliseconds(340))
         guard !Task.isCancelled else { return }
-        onFinished()
+        finish()
     }
 }
 

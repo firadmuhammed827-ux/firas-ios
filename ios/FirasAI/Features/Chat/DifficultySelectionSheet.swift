@@ -48,6 +48,8 @@ struct DifficultySelectionSheet: View {
                                 Button { onChoose(selectedLevel) } label: {
                                     Text(verbatim: isArabic ? "اختيار وإرسال" : "Choose and send")
                                         .font(.body.weight(.semibold))
+                                        // Accent-filled, like the selected level's row.
+                                        .foregroundStyle(preferences.palette.onAccent)
                                         .frame(maxWidth: .infinity, minHeight: 48)
                                 }
                                 .modifier(FirasGlassControlStyle(prominent: true))
@@ -82,11 +84,19 @@ struct DifficultySelectionSheet: View {
         .presentationCornerRadius(34)
         .presentationBackground(preferences.palette.background)
         .environment(\.layoutDirection, preferences.language.layoutDirection)
+        // A sheet is not guaranteed to inherit the root's text size.
+        .dynamicTypeSize(preferences.resolvedTypeSize)
         .onDisappear { onCancel() }
     }
 
     private func levelButton(_ level: Int) -> some View {
-        Button { selectedLevel = level } label: {
+        let isSelected = selectedLevel == level
+        // The selected row is filled with the accent, so its text and check
+        // take the on-accent colour; 0.9 keeps the hint at least 4.5:1 on the
+        // accent in every theme.
+        let primary = isSelected ? preferences.palette.onAccent : preferences.palette.textPrimary
+        let secondary = isSelected ? preferences.palette.onAccent.opacity(0.9) : preferences.palette.textSecondary
+        return Button { selectedLevel = level } label: {
             HStack(spacing: 12) {
                 Text(verbatim: "\(level)")
                     .font(.body.weight(.semibold).monospacedDigit())
@@ -98,22 +108,22 @@ struct DifficultySelectionSheet: View {
                         .font(.body.weight(.semibold))
                     Text(verbatim: DifficultyPolicy.hint(level: level, language: languageCode))
                         .font(.subheadline)
-                        .foregroundStyle(preferences.palette.textSecondary)
+                        .foregroundStyle(secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
-                if selectedLevel == level {
+                if isSelected {
                     Image(systemName: "checkmark")
                         .font(.body.weight(.semibold)).accessibilityHidden(true)
                 }
             }
-            .foregroundStyle(preferences.palette.textPrimary)
+            .foregroundStyle(primary)
             .padding(14)
             .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
         }
-        .modifier(FirasGlassControlStyle(prominent: selectedLevel == level))
+        .modifier(FirasGlassControlStyle(prominent: isSelected))
         .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(selectedLevel == level ? [.isSelected] : [])
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 
     private var subjectTitle: String {

@@ -67,12 +67,18 @@ struct ModelSelectionSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
-        .sheet(isPresented: $showsOmnixAccess) { OmnixAccessSheet(product: .ai, initialDraft: initialDraft) }
+        .sheet(isPresented: $showsOmnixAccess) {
+            // Applied here because that sheet does not re-apply the text size itself.
+            OmnixAccessSheet(product: .ai, initialDraft: initialDraft)
+                .dynamicTypeSize(preferences.resolvedTypeSize)
+        }
         .presentationDragIndicator(.visible)
         .presentationCornerRadius(34)
         .presentationBackground(preferences.palette.background)
         .presentationContentInteraction(.scrolls)
         .environment(\.layoutDirection, preferences.language.layoutDirection)
+        // A sheet is not guaranteed to inherit the root's text size.
+        .dynamicTypeSize(preferences.resolvedTypeSize)
         .task {
             await Task.yield()
             guard !Task.isCancelled else { return }
@@ -133,13 +139,13 @@ struct ModelSelectionSheet: View {
                     )
                     .accessibilityHidden(true)
 
-                Text("modelPicker.responseStyle")
+                Text(ChatStrings.modelPickerResponseStyle)
                     .font(.body.weight(.semibold))
                     .foregroundStyle(preferences.palette.textPrimary)
 
                 Spacer(minLength: 10)
 
-                Text("modelPicker.automatic")
+                Text(ChatStrings.modelPickerAutomatic)
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(preferences.palette.textSecondary)
             }

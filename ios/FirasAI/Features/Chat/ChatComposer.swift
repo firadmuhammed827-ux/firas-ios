@@ -1,4 +1,23 @@
 import SwiftUI
+@preconcurrency import UIKit
+
+/// One attached photo or file as the composer lists it. The screen builds
+/// these from its draft context; the composer only draws them and reports
+/// which one the reader removed.
+nonisolated struct ComposerAttachment: Identifiable, Sendable {
+    nonisolated enum Kind: Equatable, Sendable {
+        case image
+        case file
+    }
+
+    let id: String
+    let kind: Kind
+    /// The file name; empty for a photo.
+    let name: String
+    /// The prepared JPEG of a photo; nil for a file or while still preparing.
+    let imageData: Data?
+    let isProcessing: Bool
+}
 
 struct ChatComposer: View {
     @Binding var draft: String
@@ -20,16 +39,21 @@ struct ChatComposer: View {
     let onSend: () -> Void
     let onStop: () -> Void
     let onStartCall: () -> Void
+    /// The attached photos and files, each removable on its own. Defaulted so
+    /// a caller that does not list them keeps the count badge alone.
+    var attachments: [ComposerAttachment] = []
+    var onRemoveAttachment: (String) -> Void = { _ in }
 
     @Environment(PreferencesStore.self) private var preferences
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var controlSpace
 
     /// At rest the composer is one capsule row: +, the field, the primary
-    /// action. Focus, a draft or a pinned skill opens it into the full card
-    /// with the model button underneath.
+    /// action. Focus, a draft, a pinned skill or an attachment opens it into
+    /// the full card with the model button underneath.
     private var isExpanded: Bool {
-        isFocused || !draft.isEmpty || !selectedSkills.isEmpty || promptEngineerRecognized
+        isFocused || !draft.isEmpty || !selectedSkills.isEmpty || !attachments.isEmpty
+            || promptEngineerRecognized
     }
 
     var body: some View {
@@ -41,6 +65,9 @@ struct ChatComposer: View {
                 VStack(spacing: 4) {
                     if isExpanded && !selectedSkills.isEmpty {
                         selectedSkillRow
+                    }
+                    if isExpanded && !attachments.isEmpty {
+                        attachmentRow
                     }
                     // messageField keeps one position in this row in both states,
                     // so expanding never replaces the field or drops the keyboard.
@@ -138,6 +165,22 @@ struct ChatComposer: View {
                     .disabled(isSending)
                     .accessibilityLabel(Text(verbatim: skill.name))
                     .accessibilityHint(Text(ChatStrings.removeSkill))
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+    }
+
+    /// Built like the skill row: one chip per photo or file, and the chip
+    /// itself removes that item only.
+    private var attachmentRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(attachments) { attachment in
+                    ComposerAttachmentChip(attachment: attachment) {
+                        onRemoveAttachment(attachment.id)
+                    }
+                    .disabled(isSending)
                 }
             }
         }
@@ -283,4 +326,107 @@ private struct ComposerCircleButton: View {
         .modifier(FirasGlassControlStyle(prominent: isProminent, circular: true))
         .accessibilityLabel(Text(title))
     }
+}
+
+private struct ComposerAttachmentChip: View {
+    let attachment: ComposerAttachment
+    let onRemove: () -> Void
+
+    @Environment(PreferencesStore.self) private var preferences
+    @Environment(\.displayScale) private var displayScale
+    @State private var thumbnail: UIImage?
+
+    var body: some View {
+        Button(action: onRemove) {
+            HStack(spacing: 6) {
+                preview
+                if attachment.kind == .file {
+                    Text(verbatim: attachment.name)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: 150)
+                }
+                Image(systemName: "xmark").font(.caption2.weight(.bold))
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(preferences.palette.accent)
+            .padding(.leading, attachment.kind == .image ? 6 : 10)
+            .padding(.trailing, 10)
+            .frame(minHeight: 44)
+            .background(preferences.palette.accent.opacity(0.08), in: Capsule())
+            .contentShape(.capsule)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(
+            attachment.kind == .image ? Text(ChatStrings.attachedPhoto) : Text(verbatim: attachment.name)
+        )
+        .accessibilityValue(
+            attachment.isProcessing ? Text(ChatStrings.attachmentPreparing) : Text(verbatim: "")
+        )
+        .accessibilityHint(Text(ChatStrings.removeAttachment))
+        .task(id: ComposerThumbnailTarget(
+            attachmentID: attachment.id,
+            isReady: attachment.imageData != nil,
+            scale: displayScale
+        )) {
+            await decodeThumbnail()
+        }
+    }
+
+    @ViewBuilder
+    private var preview: some View {
+        if attachment.isProcessing {
+            ProgressView()
+                .controlSize(.small)
+                .tint(preferences.palette.accent)
+                .frame(width: 32, height: 32)
+        } else if attachment.kind == .image {
+            Group {
+                if let thumbnail {
+                    Image(uiImage: thumbnail)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    preferences.palette.surfaceSunken
+                }
+            }
+            .frame(width: 32, height: 32)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .accessibilityHidden(true)
+        } else {
+            Image(systemName: "doc.text")
+                .accessibilityHidden(true)
+        }
+    }
+
+    /// The prepared JPEG is up to 1,568 px; only a chip-sized copy is decoded,
+    /// off the main actor, and a superseded decode never publishes.
+    private func decodeThumbnail() async {
+        guard let data = attachment.imageData else {
+            thumbnail = nil
+            return
+        }
+        let edge = 32 * displayScale
+        let worker = Task.detached(priority: .userInitiated) {
+            ComposerThumbnailResult(image: ChatAttachmentProcessor.downsampledImage(data: data, maximumEdge: edge))
+        }
+        let result = await withTaskCancellationHandler {
+            await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
+        guard !Task.isCancelled else { return }
+        thumbnail = result.image
+    }
+}
+
+private nonisolated struct ComposerThumbnailTarget: Equatable {
+    let attachmentID: String
+    let isReady: Bool
+    let scale: CGFloat
+}
+
+/// UIImage is immutable here and crosses the worker boundary only after downsampling.
+private nonisolated struct ComposerThumbnailResult: @unchecked Sendable {
+    let image: UIImage?
 }

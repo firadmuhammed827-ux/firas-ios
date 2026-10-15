@@ -14,7 +14,11 @@ struct AppearanceSettingsView: View {
             ThemePicker()
         }
 
-        SettingsPanel("settings.reading", systemImage: "textformat.size") {
+        SettingsPanel(
+            "settings.reading",
+            systemImage: "textformat.size",
+            footer: "settings.reading.footer"
+        ) {
             VStack(spacing: 14) {
                 SettingsSegmentedPicker(
                     title: "settings.textSize",
@@ -126,7 +130,6 @@ struct ChatSettingsView: View {
 
 struct VoiceSettingsView: View {
     @Environment(PreferencesStore.self) private var preferences
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         @Bindable var preferences = preferences
@@ -148,33 +151,8 @@ struct VoiceSettingsView: View {
             }
         }
 
-        SettingsPanel(
-            "settings.voice.dictation",
-            systemImage: "mic",
-            footer: "settings.voice.dictation.footer"
-        ) {
-            if dynamicTypeSize.isAccessibilitySize {
-                SettingsValueRow("settings.voice.dictation", systemImage: "mic") {
-                    Picker("settings.voice.dictation", selection: $preferences.dictationDialect) {
-                        ForEach(DictationDialect.allCases) { dialect in
-                            Text(dialect.settingsTitleKey).tag(dialect)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .tint(preferences.palette.accent)
-                }
-            } else {
-                Picker("settings.voice.dictation", selection: $preferences.dictationDialect) {
-                    ForEach(DictationDialect.allCases) { dialect in
-                        Text(dialect.settingsTitleKey).tag(dialect)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(minHeight: 44)
-            }
-        }
+        // No dictation panel: the app has no speech-to-text of its own, and
+        // the keyboard's dictation follows the keyboard's language.
 
         LocalPreferencesNote(compact: false)
             .padding(.horizontal, 4)

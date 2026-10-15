@@ -245,6 +245,28 @@ private struct AccountSkillEditor: View {
             mode: mode, enabled: enabled)
     }
 
+    private var canSave: Bool {
+        store.canMutate && session.identityID == ownerID && submissionID == nil
+    }
+
+    /// iOS 26 draws the confirmation placement as an accent-filled capsule, so
+    /// an enabled Save takes onAccent there, as SettingsDoneButton does. A
+    /// disabled one keeps the system's dimmed label; earlier systems draw
+    /// accent text on the bar.
+    @ViewBuilder
+    private var saveLabel: some View {
+        if #available(iOS 26, *) {
+            if canSave {
+                Text(SkillsStrings.save)
+                    .foregroundStyle(preferences.palette.onAccent)
+            } else {
+                Text(SkillsStrings.save)
+            }
+        } else {
+            Text(SkillsStrings.save)
+        }
+    }
+
     var body: some View {
         NavigationStack {
             Group {
@@ -313,9 +335,9 @@ private struct AccountSkillEditor: View {
                             dismiss()
                         }
                     } label: {
-                        if store.isWorking { ProgressView() } else { Text(SkillsStrings.save) }
+                        if store.isWorking { ProgressView() } else { saveLabel }
                     }
-                    .disabled(!store.canMutate || session.identityID != ownerID || submissionID != nil)
+                    .disabled(!canSave)
                 }
             }
             .interactiveDismissDisabled(store.isWorking)
@@ -338,6 +360,9 @@ private struct AccountSkillEditor: View {
             store.synchronizeOwner()
         }
         .tint(preferences.palette.accent)
+        // The root of a presented sheet, which is not guaranteed to inherit
+        // the Settings sheet's size.
+        .dynamicTypeSize(preferences.resolvedTypeSize)
         .presentationDragIndicator(.visible)
     }
 

@@ -5,6 +5,9 @@ struct SettingsView: View {
 
     @Environment(PreferencesStore.self) private var preferences
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    // Captured at the sheet's root so Done closes the sheet, never only pops
+    // a column of the split view.
+    @Environment(\.dismiss) private var dismiss
 
     init(
         onAuthEntryCompleted: @escaping (AuthEntryOutcome) -> Void = { _ in }
@@ -15,15 +18,24 @@ struct SettingsView: View {
     var body: some View {
         Group {
             if horizontalSizeClass == .regular {
-                SettingsSplitView(onAuthEntryCompleted: onAuthEntryCompleted)
+                SettingsSplitView(
+                    onAuthEntryCompleted: onAuthEntryCompleted,
+                    onDone: { dismiss() }
+                )
             } else {
-                SettingsTabView(onAuthEntryCompleted: onAuthEntryCompleted)
+                SettingsTabView(
+                    onAuthEntryCompleted: onAuthEntryCompleted,
+                    onDone: { dismiss() }
+                )
             }
         }
         .tint(preferences.palette.accent)
         .preferredColorScheme(preferences.theme.isLight ? .light : .dark)
         .environment(\.locale, preferences.language.locale)
         .environment(\.layoutDirection, preferences.language.layoutDirection)
+        // Re-applied here because a sheet is not guaranteed to inherit the
+        // root's size, and Text size is chosen inside this sheet.
+        .dynamicTypeSize(preferences.resolvedTypeSize)
         .presentationSizing(.page)
     }
 }
@@ -60,6 +72,7 @@ enum SettingsDestination: String, CaseIterable, Hashable, Identifiable {
 
 private struct SettingsTabView: View {
     let onAuthEntryCompleted: (AuthEntryOutcome) -> Void
+    let onDone: () -> Void
     @State private var selection: SettingsDestination = .account
 
     var body: some View {
@@ -68,7 +81,8 @@ private struct SettingsTabView: View {
                 NavigationStack {
                     SettingsPage(
                         destination: destination,
-                        onAuthEntryCompleted: onAuthEntryCompleted
+                        onAuthEntryCompleted: onAuthEntryCompleted,
+                        onDone: onDone
                     )
                 }
                 .tabItem {
@@ -82,8 +96,10 @@ private struct SettingsTabView: View {
 
 private struct SettingsSplitView: View {
     let onAuthEntryCompleted: (AuthEntryOutcome) -> Void
+    let onDone: () -> Void
 
     @Environment(PreferencesStore.self) private var preferences
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var selection: SettingsDestination? = .account
 
     var body: some View {
@@ -95,7 +111,7 @@ private struct SettingsSplitView: View {
             }
             .navigationTitle("settings.title")
             .scrollContentBackground(.hidden)
-            .background(preferences.palette.sidebar)
+            .background(sidebarFill)
             .navigationSplitViewColumnWidth(min: 230, ideal: 280, max: 340)
             .safeAreaInset(edge: .bottom) {
                 LocalPreferencesNote(compact: true)
@@ -105,18 +121,28 @@ private struct SettingsSplitView: View {
         } detail: {
             SettingsPage(
                 destination: selection ?? .account,
-                onAuthEntryCompleted: onAuthEntryCompleted
+                onAuthEntryCompleted: onAuthEntryCompleted,
+                onDone: onDone
             )
         }
         .navigationSplitViewStyle(.balanced)
+    }
+
+    /// The shell sidebar's rule: iOS 26 floats this column on system glass,
+    /// which an opaque fill would cover; earlier systems and Reduce
+    /// Transparency keep the theme's own fill.
+    private var sidebarFill: Color {
+        if #available(iOS 26, *), !reduceTransparency {
+            return .clear
+        }
+        return preferences.palette.sidebar
     }
 }
 
 private struct SettingsPage: View {
     let destination: SettingsDestination
     let onAuthEntryCompleted: (AuthEntryOutcome) -> Void
-
-    @Environment(SessionStore.self) private var session
+    let onDone: () -> Void
 
     var body: some View {
         ZStack {
@@ -143,13 +169,59 @@ private struct SettingsPage: View {
                 .frame(maxWidth: .infinity)
             }
             .scrollDismissesKeyboard(.interactively)
-            .refreshable {
-                guard destination == .account, session.isAuthenticated else { return }
-                await session.refreshAccount()
-            }
+            .modifier(AccountRefreshModifier(isActive: destination == .account))
         }
         .navigationTitle(destination.titleKey)
         .navigationBarTitleDisplayMode(.large)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                SettingsDoneButton(action: onDone)
+            }
+        }
+    }
+}
+
+/// Pull-to-refresh only where there is server state to re-read. On every
+/// other page the swipe down belongs to the sheet, so it closes Settings.
+private struct AccountRefreshModifier: ViewModifier {
+    let isActive: Bool
+
+    @Environment(SessionStore.self) private var session
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isActive {
+            content.refreshable {
+                guard session.isAuthenticated else { return }
+                await session.refreshAccount()
+            }
+        } else {
+            content
+        }
+    }
+}
+
+/// Done for a settings sheet. iOS 26 draws the confirmation placement as an
+/// accent-filled capsule, so its label takes onAccent there (5.2:1 or more in
+/// every theme, where the system white measures 2.3-2.6:1 on the dark
+/// themes). Earlier systems draw it as accent text on the bar, as before.
+struct SettingsDoneButton: View {
+    let action: () -> Void
+
+    @Environment(PreferencesStore.self) private var preferences
+
+    var body: some View {
+        if #available(iOS 26, *) {
+            Button(action: action) {
+                Text("common.done")
+                    .foregroundStyle(preferences.palette.onAccent)
+            }
+            .buttonStyle(.glassProminent)
+            .tint(preferences.palette.accent)
+        } else {
+            Button("common.done", action: action)
+                .foregroundStyle(preferences.palette.accent)
+        }
     }
 }
 
@@ -354,6 +426,8 @@ struct SettingsSubmitButton: View {
     let action: () -> Void
 
     @Environment(PreferencesStore.self) private var preferences
+    // The parent's state; this button's own .disabled is applied below it.
+    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
         Group {
@@ -383,12 +457,26 @@ struct SettingsSubmitButton: View {
     private var button: some View {
         if isDestructive {
             Button(role: .destructive, action: action) {
-                buttonLabel
+                filledLabel
             }
         } else {
             Button(action: action) {
-                buttonLabel
+                filledLabel
             }
+        }
+    }
+
+    /// A filled button's label takes onAccent while it can be pressed. On the
+    /// accent fill it measures 5.2:1 or more in every theme, and 5.0:1 or more
+    /// on the error fill, where the system white falls to 2.3-3.3:1 on the
+    /// dark themes. A disabled button keeps the system's own dimmed label.
+    @ViewBuilder
+    private var filledLabel: some View {
+        if prominent, isEnabled, !isDisabled, !isWorking {
+            buttonLabel
+                .foregroundStyle(preferences.palette.onAccent)
+        } else {
+            buttonLabel
         }
     }
 
@@ -453,16 +541,6 @@ extension MotionPreference {
         switch self {
         case .full: "settings.motion.full"
         case .reduced: "settings.motion.reduced"
-        }
-    }
-}
-
-extension DictationDialect {
-    var settingsTitleKey: LocalizedStringKey {
-        switch self {
-        case .automatic: "settings.voice.dictation.auto"
-        case .arabic: "language.arabic"
-        case .english: "language.english"
         }
     }
 }

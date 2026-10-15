@@ -45,7 +45,7 @@ enum ChatRenderingTests {
         expect(Set(initialPieces.map(\.id)).count == initialPieces.count, "segment identifiers are unique")
 
         let math = initialPieces.compactMap { piece -> (String, Bool)? in
-            if case .math(let value, let inline) = piece.kind { return (value, inline) }
+            if case .math(let value, let inline, _) = piece.kind { return (value, inline) }
             return nil
         }
         expect(math.count == 2, "both math blocks are preserved")
@@ -55,7 +55,7 @@ enum ChatRenderingTests {
         let multiline = try ChatTextParser.segments(from: "مقدمة 😀 $$a +\nb = c$$ خاتمة")
         let multilinePieces = multiline.flatMap(pieces)
         expect(multiline.count == 1 && multilinePieces.count == 3, "display formula spans line separators without dropping surrounding text")
-        if case .math(let expression, let inline) = multilinePieces[1].kind {
+        if case .math(let expression, let inline, _) = multilinePieces[1].kind {
             expect(expression == "a +\nb = c" && !inline, "multiline display content and presentation remain intact")
             expect(multilinePieces[1].id == ("مقدمة 😀 " as NSString).length, "multiline formula offset uses UTF16 after an emoji")
         } else {
@@ -98,7 +98,7 @@ enum ChatRenderingTests {
         }
         if case .listItem(let marker, _, let step) = solution[3].kind {
             expect(marker == "2." && step.count == 2, "the second step keeps its number and its formula")
-            if case .math(let value, let inline) = step[1].kind {
+            if case .math(let value, let inline, _) = step[1].kind {
                 expect(value == "x=1" && inline, "a formula inside a step stays a math piece of that step")
             } else {
                 preconditionFailure("the formula in the second step must stay a formula")
@@ -164,7 +164,8 @@ enum ChatRenderingTests {
         let table = try ChatTextParser.segments(from: "| x | $|x|$ |\n|---|:-:|\n| 1 | 2 |")
         if case .table(let rows)? = table.first?.kind, table.count == 1 {
             expect(rows.count == 2 && rows[0].isHeader && !rows[1].isHeader, "a pipe table keeps one row per line under its header")
-            expect(rows[0].cells.count == 2 && String(rows[0].cells[1].characters) == "|x|", "a bar inside a formula is not a column")
+            expect(rows[0].cells.count == 2 && String(rows[0].cells[1].characters) == "\u{2066}|x|\u{2069}",
+                   "a bar inside a formula is not a column, and the formula is an isolated readable run")
         } else {
             preconditionFailure("a pipe table must not collapse into a paragraph")
         }
@@ -276,6 +277,124 @@ enum ChatRenderingTests {
             return nil
         }
         expect(sibling.count == 2 && siblingMarkers == ["•", "•"], "an empty item after an item is still an item")
+
+        // Maths reads as maths: an inline formula stays inside its sentence as
+        // an isolated left-to-right run of readable Unicode, in source order.
+        func drawn(_ lines: [ChatTextLine]) -> [String] {
+            lines.map { line -> String in
+                switch line.kind {
+                case .text(let text):
+                    return String(text.characters)
+                case .display(let formula):
+                    return "[" + formula + "]"
+                }
+            }
+        }
+        func plain(_ value: String) -> String {
+            var result = value
+            for mark in ["\u{200E}", "\u{200F}", "\u{2066}", "\u{2069}"] {
+                result = result.replacingOccurrences(of: mark, with: "")
+            }
+            return result
+        }
+        func formulas(_ segments: [ChatTextSegment]) -> [String] {
+            segments.flatMap(pieces).compactMap { piece -> String? in
+                if case .math(let value, _, _) = piece.kind { return value }
+                return nil
+            }
+        }
+
+        let sentence = try ChatTextParser.segments(from: "إذا كانت $x^2 = 4$ فإن $x = \\pm 2$ وهو الحل")
+        expect(sentence.count == 1 && sentence.first?.rightToLeft == true,
+               "an Arabic sentence with two formulas stays one right-to-left paragraph")
+        let sentenceLines = ChatTextParser.lines(sentence.flatMap(pieces))
+        expect(sentenceLines.count == 1, "both inline formulas stay inside one drawn line, not rows of their own")
+        let sentenceText = drawn(sentenceLines).first ?? ""
+        expect(plain(sentenceText) == "إذا كانت x² = 4 فإن x = ± 2 وهو الحل",
+               "the formulas read as Unicode maths, in order, with the spaces around them")
+        expect(sentenceText.contains("\u{2066}x² = 4\u{2069}") && sentenceText.contains("\u{2066}x = ± 2\u{2069}"),
+               "each inline formula is isolated left to right inside the Arabic sentence")
+        let twoLines = try ChatTextParser.segments(from: "نعلم أن $a = 1$\nإذن $b = 2$")
+        let twoLinesText = drawn(ChatTextParser.lines(twoLines.flatMap(pieces)))
+        expect(twoLines.count == 1 && twoLinesText.map(plain) == ["نعلم أن a = 1\nإذن b = 2"],
+               "the line break after a formula that ends a line survives inside its paragraph")
+        // Every line after a break is a paragraph of its own to Text, so it
+        // takes the block's mark too: a Latin opening never flips it.
+        let afterFormula = try ChatTextParser.segments(from: "نعلم أن $a = 1$\nf(x) = 2x هي المشتقة")
+        let afterFormulaText = drawn(ChatTextParser.lines(afterFormula.flatMap(pieces)))
+        expect(afterFormula.first?.rightToLeft == true && afterFormulaText.count == 1
+                   && afterFormulaText[0].contains("\n\u{200F}f(x)"),
+               "the line after a formula that ended the line above keeps the block's right-to-left mark")
+        let continued = try ChatTextParser.segments(from: "الخطوة الأولى في الحل\nf(x) = 2x هي المشتقة")
+        expect(continued.count == 1 && continued.flatMap(pieces).allSatisfy { piece in
+                   guard case .markdown(_, let text) = piece.kind else { return false }
+                   let drawnText = String(text.characters)
+                   return drawnText.hasPrefix("\u{200F}") && drawnText.contains("\n\u{200F}f(x)")
+               }, "every line of a multi-line Arabic paragraph takes the right-to-left mark")
+
+        let conversions: [(String, String)] = [
+            ("x^2", "x²"),
+            ("a_n", "aₙ"),
+            ("a_{n+1}", "aₙ₊₁"),
+            ("\\frac{1}{2}", "1/2"),
+            ("\\frac{x+1}{2}", "(x+1)/2"),
+            ("2\\frac{1}{2}", "2 1/2"),
+            ("\\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}", "(-b ± √(b² - 4ac))/(2a)"),
+            ("\\frac{\\partial f}{\\partial x}", "∂f/∂x"),
+            ("\\sqrt{x}", "√x"),
+            ("\\sqrt{x+1}", "√(x+1)"),
+            ("\\sqrt[3]{8}", "³√8"),
+            ("\\int_0^1 x\\,dx", "∫₀¹ x dx"),
+            ("\\alpha + \\beta = \\pi", "α + β = π"),
+            ("\\Delta x \\le \\varepsilon", "Δ x ≤ ε"),
+            ("\\lim_{x \\to 0} \\frac{\\sin x}{x} = 1", "limₓ→₀ (sin x)/x = 1"),
+            ("\\sum_{i=1}^{n} i", "Σᵢ₌₁ⁿ i"),
+            ("e^{i\\pi}", "e^(iπ)"),
+            ("90^\\circ", "90°"),
+            ("x \\in \\mathbb{R}", "x ∈ ℝ"),
+            ("v = 5\\,\\text{m/s}", "v = 5 m/s"),
+            ("\\left( \\frac{a}{b} \\right)", "(a/b)"),
+            ("\\{1, 2\\}", "{1, 2}"),
+            ("\\ce{H2SO4}", "H₂SO₄"),
+            ("\\weird + 1", "weird + 1"),
+        ]
+        for (tex, expected) in conversions {
+            expect(ChatMathText.readable(tex, inline: true) == expected, "\(tex) reads as \(expected)")
+        }
+        expect(ChatMathText.readable("a &= b \\\\ c &= d", inline: false) == "a = b\nc = d",
+               "a display formula breaks its lines only where the source wrote \\\\")
+        expect(ChatMathText.readable("f(x) = \\begin{cases} x & x \\ge 0 \\\\ -x & x < 0 \\end{cases}", inline: false)
+                   == "f(x) = x, x ≥ 0\n-x, x < 0",
+               "inside cases, a value and its condition are parted by a comma")
+        // A root's degree is read under the same nesting cap as braces, so a
+        // saved message of \sqrt[\sqrt[… cannot exhaust the stack on every redraw.
+        let rootNest = String(repeating: "\\sqrt[", count: 5000)
+        expect(!ChatMathText.readable(rootNest, inline: true).isEmpty, "a deep nest of root degrees still returns")
+        let rootNestMessage = try ChatTextParser.segments(from: "$" + rootNest + "$")
+        expect(!rootNestMessage.isEmpty, "a message made of a deep nest of root degrees still renders")
+
+        let display = try ChatTextParser.segments(from: "النتيجة:\n$$\\int_0^1 x\\,dx = \\frac{1}{2}$$\nوهي القيمة المطلوبة")
+        expect(display.count == 1 && drawn(ChatTextParser.lines(display.flatMap(pieces))).map(plain)
+                   == ["النتيجة:", "[∫₀¹ x dx = 1/2]", "وهي القيمة المطلوبة"],
+               "a display formula takes a readable line of its own between its sentences")
+        let bracketed = try ChatTextParser.segments(from: "Then\n\\[\na^2 + b^2 = c^2\n\\]")
+        expect(drawn(ChatTextParser.lines(bracketed.flatMap(pieces))).map(plain) == ["Then", "[a² + b² = c²]"],
+               "\\[ … \\] across lines is a display formula too")
+
+        let prices = try ChatTextParser.segments(from: "The tea costs $5 and $10 for two")
+        expect(formulas(prices).isEmpty && prices.flatMap(pieces).compactMap(visible) == ["The tea costs $5 and $10 for two"],
+               "a price pair stays text")
+        let escaped = try ChatTextParser.segments(from: "السعر \\$5 والمتغير $x$")
+        expect(formulas(escaped) == ["x"], "an escaped dollar is never a delimiter")
+        let shell = try ChatTextParser.segments(from: "نفّذ `echo $USER $HOME` ثم احسب $y^2$")
+        expect(formulas(shell) == ["y^2"], "dollars inside a code span are never a formula")
+        let stray = try ChatTextParser.segments(from: "التكلفة $ ثم المعادلة $x$ هنا")
+        expect(formulas(stray) == ["x"], "Arabic prose between a stray dollar and a real one is not adopted as maths")
+
+        let symbolsOnly = try ChatTextParser.segments(from: "- مثال أول\n- $x$ = $y$")
+        let symbolLine = symbolsOnly.count == 2 ? drawn(ChatTextParser.lines(pieces(symbolsOnly[1]))).first ?? "" : ""
+        expect(symbolLine.hasPrefix("\u{200E}") && plain(symbolLine) == "x = y",
+               "a line of formulas alone reads left to right, so x = y never turns into y = x")
 
         let renderer = ChatTextRenderer()
         let first = try await renderer.render(base)

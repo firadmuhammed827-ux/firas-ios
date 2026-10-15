@@ -149,17 +149,51 @@ enum AppLanguage: String, CaseIterable, Codable, Identifiable, Sendable {
     }
 }
 
+extension LayoutDirection {
+    /// The direction a document's or worker's own text reads in, decided by
+    /// its letters rather than the app language, with the chat renderer's
+    /// rule (the website's autoDirOne): right to left unless the other letters
+    /// outnumber the right-to-left ones by more than one and a half times.
+    /// The opening is enough to decide it; text with no letters keeps `fallback`.
+    static func ofContent(_ text: String, fallback: LayoutDirection) -> LayoutDirection {
+        var rightToLeft = 0
+        var other = 0
+        for scalar in text.unicodeScalars.prefix(600) where scalar.properties.isAlphabetic {
+            switch scalar.value {
+            case 0x0590...0x08FF, 0xFB1D...0xFDFF, 0xFE70...0xFEFF:
+                rightToLeft += 1
+            default:
+                other += 1
+            }
+        }
+        guard rightToLeft + other > 0 else { return fallback }
+        return Double(other) > Double(rightToLeft) * 1.5 ? .leftToRight : .rightToLeft
+    }
+}
+
 enum FontScale: String, CaseIterable, Codable, Identifiable, Sendable {
     case small = "sm"
     case medium = "md"
     case large = "lg"
 
     var id: String { rawValue }
-    var factor: CGFloat {
+
+    /// The Dynamic Type size this preference produces from the one chosen in
+    /// iOS Settings: one step either side of it, so every text style scales.
+    /// Small never takes an accessibility size below what the reader chose
+    /// for the whole device.
+    func dynamicTypeSize(from system: DynamicTypeSize) -> DynamicTypeSize {
+        let sizes = DynamicTypeSize.allCases.sorted()
+        guard let index = sizes.firstIndex(of: system) else { return system }
+
         switch self {
-        case .small: 0.92
-        case .medium: 1
-        case .large: 1.10
+        case .small:
+            guard !system.isAccessibilitySize, index > 0 else { return system }
+            return sizes[index - 1]
+        case .medium:
+            return system
+        case .large:
+            return index + 1 < sizes.count ? sizes[index + 1] : system
         }
     }
 }
@@ -217,9 +251,19 @@ final class PreferencesStore {
     var sendOnReturn: Bool { didSet { persist(sendOnReturn, forKey: Keys.sendOnReturn) } }
     var sharpenImages: Bool { didSet { persist(sharpenImages, forKey: Keys.sharpenImages) } }
     var callVoice: CallVoice { didSet { persist(callVoice.rawValue, forKey: Keys.callVoice) } }
+    // No longer shown in Settings: the app has no dictation of its own, the
+    // keyboard's dictation follows the keyboard. Still read so an old value
+    // loads harmlessly, and still cleared by resetToDefaults.
     var dictationDialect: DictationDialect {
         didSet { persist(dictationDialect.rawValue, forKey: Keys.dictationDialect) }
     }
+    /// The size chosen in iOS Settings, mirrored by the root view from outside
+    /// its own override. Not persisted and not reset: it belongs to the device.
+    var systemTypeSize: DynamicTypeSize = .large
+
+    /// The size every presentation root applies. It is absolute, so applying
+    /// it again inside a sheet that already inherited it changes nothing.
+    var resolvedTypeSize: DynamicTypeSize { fontScale.dynamicTypeSize(from: systemTypeSize) }
 
     @ObservationIgnored private let defaults: UserDefaults
 
@@ -296,8 +340,8 @@ final class PreferencesStore {
         static let motion = "motion"
         static let sendOnReturn = "enterSend"
         static let sharpenImages = "imageSharpening"
-        // Shared with VoiceCallView's @AppStorage so Settings takes effect
-        // immediately without a second source of truth.
+        // VoiceCallView reads preferences.callVoice; this store is the only
+        // reader and writer of the key.
         static let callVoice = "callVoice"
         static let dictationDialect = "dictationLanguage"
 

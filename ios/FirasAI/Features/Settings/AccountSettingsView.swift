@@ -59,17 +59,24 @@ private struct AccountSheetContent: View {
     let sheet: AccountSheet
     let onAuthEntryCompleted: (AuthEntryOutcome) -> Void
 
+    @Environment(PreferencesStore.self) private var preferences
+
     var body: some View {
-        switch sheet {
-        case .signIn:
-            AuthView(onEntryCompleted: onAuthEntryCompleted)
-        case .changeEmail:
-            ChangeEmailSheet()
-        case .changePassword:
-            ChangePasswordSheet()
-        case .deleteAccount:
-            DeleteAccountSheet()
+        Group {
+            switch sheet {
+            case .signIn:
+                AuthView(onEntryCompleted: onAuthEntryCompleted)
+            case .changeEmail:
+                ChangeEmailSheet()
+            case .changePassword:
+                ChangePasswordSheet()
+            case .deleteAccount:
+                DeleteAccountSheet()
+            }
         }
+        // The root of a presented sheet, which is not guaranteed to inherit
+        // the Settings sheet's size.
+        .dynamicTypeSize(preferences.resolvedTypeSize)
     }
 }
 

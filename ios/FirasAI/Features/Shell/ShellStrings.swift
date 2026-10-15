@@ -4,10 +4,18 @@ enum ShellStrings {
     static let openSidebar = LocalizedStringResource("sidebar.open", table: "Shell")
     static let closeSidebar = LocalizedStringResource("sidebar.close", table: "Shell")
     static let searchChats = LocalizedStringResource("sidebar.search", table: "Shell")
+    static let searchProjects = LocalizedStringResource("sidebar.searchProjects", table: "Shell")
+    static let searchSources = LocalizedStringResource("sidebar.searchSources", table: "Shell")
     static let clearSearch = LocalizedStringResource("sidebar.clearSearch", table: "Shell")
     static let products = LocalizedStringResource("sidebar.products", table: "Shell")
     static let recent = LocalizedStringResource("sidebar.recent", table: "Shell")
+    static let projects = LocalizedStringResource("sidebar.projects", table: "Shell")
+    static let sources = LocalizedStringResource("sidebar.sources", table: "Shell")
+    static let loading = LocalizedStringResource("sidebar.loading", table: "Shell")
     static let noChats = LocalizedStringResource("sidebar.noChats", table: "Shell")
+    static let noProjects = LocalizedStringResource("sidebar.noProjects", table: "Shell")
+    static let noSources = LocalizedStringResource("sidebar.noSources", table: "Shell")
+    static let noMatches = LocalizedStringResource("sidebar.noMatches", table: "Shell")
     static let newChat = LocalizedStringResource("sidebar.newChat", table: "Shell")
     static let settings = LocalizedStringResource("sidebar.settings", table: "Shell")
     static let guest = LocalizedStringResource("sidebar.guest", table: "Shell")
@@ -16,6 +24,7 @@ enum ShellStrings {
     static let deleteChatHint = LocalizedStringResource("sidebar.deleteChatHint", table: "Shell")
     static let cancelDeletion = LocalizedStringResource("sidebar.cancelDeletion", table: "Shell")
     static let dismissOverlay = LocalizedStringResource("sidebar.dismissOverlay", table: "Shell")
+    static let skipIntroHint = LocalizedStringResource("intro.skipHint", table: "Shell")
 
     static func productTitle(_ product: ProductKind) -> LocalizedStringResource {
         switch product {

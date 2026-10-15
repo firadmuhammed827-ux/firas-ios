@@ -11,16 +11,25 @@ struct ShellSidebar: View {
     @Binding var compactSidebarPresented: Bool
     @Binding var presentedSheet: ShellSheet?
     let isCompact: Bool
-    var onCloseSidebar: (() -> Void)? = nil
+    /// True where iOS 26 floats this split-view column on system glass.
+    var floatsOverContent = false
+    /// The split view's column: shows the chosen screen in a collapsed split view.
+    var onShowDetail: (() -> Void)? = nil
 
     @Environment(PreferencesStore.self) private var preferences
     @Environment(SessionStore.self) private var session
     @Environment(ChatStore.self) private var chatStore
+    @Environment(CodeStore.self) private var codeStore
+    @Environment(BrainStore.self) private var brainStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     @State private var searchQuery = ""
     @State private var pendingDeletion: SidebarChatDeletion?
     @State private var deletionNavigationGeneration = 0
+    @State private var isRefreshingRecent = false
+    /// A chat this sidebar asked to open that has not opened yet.
+    @State private var requestedConversationID: String?
 
     private let products: [ProductKind] = [.ai, .code, .brain]
 
@@ -31,7 +40,7 @@ struct ShellSidebar: View {
             sidebarList
             accountFooter
         }
-        .background(preferences.palette.sidebar)
+        .background(sidebarFill)
         .overlay(alignment: .trailing) {
             if isCompact {
                 Rectangle()
@@ -56,8 +65,15 @@ struct ShellSidebar: View {
         .onChange(of: session.identityID) { _, _ in retireDeletion() }
         .onChange(of: session.identityGeneration) { _, _ in retireDeletion() }
         .onChange(of: session.isWorking) { _, working in if working { retireDeletion() } }
-        .onChange(of: selectedProduct) { _, _ in retireDeletion() }
-        .onChange(of: chatStore.selectedConversationID) { _, _ in retireDeletion() }
+        .onChange(of: selectedProduct) { _, _ in
+            retireDeletion()
+            // Each product searches its own list.
+            searchQuery = ""
+        }
+        .onChange(of: chatStore.selectedConversationID) { _, id in
+            retireDeletion()
+            if id == requestedConversationID { requestedConversationID = nil }
+        }
         .onChange(of: compactSidebarPresented) { _, visible in if !visible { retireDeletion() } }
         .onChange(of: presentedSheet) { _, sheet in if sheet != nil { retireDeletion() } }
         .onDisappear { retireDeletion() }
@@ -80,7 +96,9 @@ struct ShellSidebar: View {
                     .modifier(FirasGlassControlStyle(circular: true))
                     .accessibilityLabel(Text(ShellStrings.newChat))
 
-                    if isCompact || onCloseSidebar != nil {
+                    // The split view has its own sidebar toggle; only the
+                    // drawer needs a close button.
+                    if isCompact {
                         Button(action: closeSidebar) {
                             Image(systemName: "xmark")
                                 .font(.system(size: 15, weight: .semibold))
@@ -107,9 +125,9 @@ struct ShellSidebar: View {
 
             TextField(
                 text: $searchQuery,
-                prompt: Text(ShellStrings.searchChats)
+                prompt: Text(searchPrompt)
             ) {
-                Text(ShellStrings.searchChats)
+                Text(searchPrompt)
             }
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
@@ -140,12 +158,10 @@ struct ShellSidebar: View {
         }
         .padding(.horizontal, 14)
         .padding(.bottom, 8)
-        .environment(\.layoutDirection, preferences.language.layoutDirection)
     }
 
     private var sidebarList: some View {
-        let conversations = filteredConversations
-        return List {
+        List {
             Section {
                 ForEach(products) { product in
                     Button {
@@ -166,48 +182,139 @@ struct ShellSidebar: View {
             }
 
             Section {
-                if conversations.isEmpty {
-                    Text(ShellStrings.noChats)
-                        .font(.subheadline)
-                        .foregroundStyle(preferences.palette.textMuted)
-                        .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
+                // A pull to refresh shows its own spinner instead.
+                if recentIsLoading && !isRefreshingRecent {
+                    loadingRow
                 } else {
-                    ForEach(conversations) { conversation in
-                        Button {
-                            selectConversation(conversation.id)
-                        } label: {
-                            ConversationSidebarRow(
-                                conversation: conversation,
-                                isSelected: chatStore.selectedConversationID == conversation.id
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            Button(role: .destructive) {
-                                requestDeletion(conversation)
-                            } label: {
-                                Label {
-                                    Text(ShellStrings.deleteChat)
-                                } icon: {
-                                    Image(systemName: "trash")
-                                }
-                            }
-                        }
+                    switch selectedProduct {
+                    case .ai: conversationRows
+                    case .code: projectRows
+                    case .brain: sourceRows
                     }
                 }
             } header: {
-                Text(ShellStrings.recent)
+                Text(recentHeader)
                     .foregroundStyle(preferences.palette.textMuted)
             }
         }
         .listStyle(.sidebar)
         .scrollContentBackground(.hidden)
         .environment(\.defaultMinListRowHeight, 48)
-        .environment(\.layoutDirection, preferences.language.layoutDirection)
+        .refreshable { await refreshRecent() }
+    }
+
+    @ViewBuilder
+    private var conversationRows: some View {
+        let conversations = filteredConversations
+        if conversations.isEmpty {
+            emptyRow(searchTerm.isEmpty ? ShellStrings.noChats : ShellStrings.noMatches)
+        } else {
+            ForEach(conversations) { conversation in
+                Button {
+                    selectConversation(conversation.id)
+                } label: {
+                    RecentSidebarRow(
+                        title: conversation.title,
+                        systemImage: conversation.pinned ? "pin.fill" : "bubble.left",
+                        accentsIcon: conversation.pinned,
+                        isSelected: chatStore.selectedConversationID == conversation.id,
+                        isOpening: chatStore.loadingConversationID == conversation.id
+                    )
+                }
+                .buttonStyle(.plain)
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    Button(role: .destructive) {
+                        requestDeletion(conversation)
+                    } label: {
+                        Label {
+                            Text(ShellStrings.deleteChat)
+                        } icon: {
+                            Image(systemName: "trash")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Firas Code projects live in CodeStore on this device; a row opens the
+    /// project in the Code screen and never touches the Chat conversation.
+    @ViewBuilder
+    private var projectRows: some View {
+        let projects = filteredProjects
+        if projects.isEmpty {
+            emptyRow(searchTerm.isEmpty ? ShellStrings.noProjects : ShellStrings.noMatches)
+        } else {
+            ForEach(projects) { project in
+                Button {
+                    openProject(project)
+                } label: {
+                    RecentSidebarRow(
+                        title: project.name,
+                        systemImage: "folder",
+                        accentsIcon: false,
+                        isSelected: codeStore.workspace?.id == project.id
+                    )
+                }
+                .buttonStyle(.plain)
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            }
+        }
+    }
+
+    /// Firas Brain sources; a row chooses the source for the next question,
+    /// the same choice its row on the Brain screen makes.
+    @ViewBuilder
+    private var sourceRows: some View {
+        let sources = filteredSources
+        if sources.isEmpty {
+            emptyRow(searchTerm.isEmpty ? ShellStrings.noSources : ShellStrings.noMatches)
+        } else {
+            ForEach(sources) { source in
+                let isChosen = brainStore.selectedDocumentIDs.contains(source.id)
+                Button {
+                    chooseSource(source)
+                } label: {
+                    RecentSidebarRow(
+                        title: source.title,
+                        systemImage: isChosen ? "checkmark.circle.fill" : "doc.text",
+                        accentsIcon: isChosen,
+                        isSelected: isChosen
+                    )
+                }
+                .buttonStyle(.plain)
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            }
+        }
+    }
+
+    private func emptyRow(_ text: LocalizedStringResource) -> some View {
+        Text(text)
+            .font(.subheadline)
+            .foregroundStyle(preferences.palette.textMuted)
+            .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+    }
+
+    /// Shown instead of the empty state while the list has not arrived yet.
+    private var loadingRow: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.small)
+                .tint(preferences.palette.textMuted)
+            Text(ShellStrings.loading)
+                .font(.subheadline)
+                .foregroundStyle(preferences.palette.textMuted)
+        }
+        .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
     }
 
     private var accountFooter: some View {
@@ -218,8 +325,8 @@ struct ShellSidebar: View {
             HStack(spacing: 8) {
                 Button {
                     retireDeletion()
-                    presentedSheet = .authentication
-                    dismissCompactSidebar()
+                    presentedSheet = ShellSheet.account(isAuthenticated: session.isAuthenticated)
+                    closeDrawer()
                 } label: {
                     HStack(spacing: 10) {
                         Image(systemName: session.isAuthenticated ? "person.crop.circle.fill" : "person.crop.circle")
@@ -251,7 +358,7 @@ struct ShellSidebar: View {
                 Button {
                     retireDeletion()
                     presentedSheet = .settings
-                    dismissCompactSidebar()
+                    closeDrawer()
                 } label: {
                     Image(systemName: "gearshape")
                         .font(.system(size: 17, weight: .medium))
@@ -263,24 +370,112 @@ struct ShellSidebar: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
         }
-        .background(preferences.palette.sidebar)
-        .environment(\.layoutDirection, preferences.language.layoutDirection)
+        .background(sidebarFill)
     }
 
-    private var filteredConversations: [ChatSummary] {
-        let productChats = chatStore.conversations.filter { conversation in
-            guard !conversation.agent else { return false }
-            return switch selectedProduct {
-            case .ai: !conversation.agent && !conversation.codeProj && !conversation.brainNb
-            case .code: conversation.codeProj
-            case .brain: conversation.brainNb
-            }
+    /// iOS 26 floats the split view's sidebar on system glass, which an opaque
+    /// fill would cover. The drawer, a collapsed split view, earlier systems
+    /// and Reduce Transparency keep the theme's own fill.
+    private var sidebarFill: Color {
+        if #available(iOS 26, *), floatsOverContent, !isCompact, !reduceTransparency {
+            return .clear
         }
+        return preferences.palette.sidebar
+    }
 
-        let trimmedQuery = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedQuery.isEmpty else { return productChats }
-        return productChats.filter {
-            $0.title.localizedCaseInsensitiveContains(trimmedQuery)
+    private var searchPrompt: LocalizedStringResource {
+        switch selectedProduct {
+        case .ai: ShellStrings.searchChats
+        case .code: ShellStrings.searchProjects
+        case .brain: ShellStrings.searchSources
+        }
+    }
+
+    /// Chat lists its recent conversations; Code and Brain list their whole
+    /// project and source libraries.
+    private var recentHeader: LocalizedStringResource {
+        switch selectedProduct {
+        case .ai: ShellStrings.recent
+        case .code: ShellStrings.projects
+        case .brain: ShellStrings.sources
+        }
+    }
+
+    private var searchTerm: String {
+        searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Ordinary chats only. Server chats flagged for Code or Brain are never
+    /// opened in Chat; those products list their own items.
+    private var filteredConversations: [ChatSummary] {
+        let term = searchTerm
+        return chatStore.conversations.filter { conversation in
+            guard !conversation.agent else { return false }
+            guard !conversation.codeProj, !conversation.brainNb else { return false }
+            return term.isEmpty || conversation.title.localizedCaseInsensitiveContains(term)
+        }
+    }
+
+    private var filteredProjects: [CodeWorkspaceProject] {
+        let term = searchTerm
+        return codeStore.projects.filter {
+            term.isEmpty || $0.name.localizedCaseInsensitiveContains(term)
+        }
+    }
+
+    private var filteredSources: [BrainDocument] {
+        let term = searchTerm
+        return brainStore.documents.filter {
+            term.isEmpty || $0.title.localizedCaseInsensitiveContains(term)
+        }
+    }
+
+    /// True only while the list has nothing to show yet and is being fetched,
+    /// including the sign-in restore that comes before the first chat list.
+    private var recentIsLoading: Bool {
+        switch selectedProduct {
+        case .ai:
+            chatStore.conversations.isEmpty
+                && (chatStore.isLoading || (session.isWorking && session.phase == .restoring))
+        case .code:
+            codeStore.isLoadingProjects && codeStore.projects.isEmpty
+        case .brain:
+            brainStore.isLoading && brainStore.documents.isEmpty
+        }
+    }
+
+    /// Each read runs in its own task. Closing the drawer removes this view
+    /// and cancels the pull, which must not cancel the read and report it
+    /// as a failure.
+    private func refreshRecent() async {
+        isRefreshingRecent = true
+        defer { isRefreshingRecent = false }
+        switch selectedProduct {
+        case .ai:
+            guard !session.isWorking else { return }
+            // A launch whose sign-in restore failed has no account to list yet.
+            if session.identityID == nil {
+                if session.phase == .restoring {
+                    let sessionStore = session
+                    await Task { await sessionStore.restore() }.value
+                }
+                return
+            }
+            let store = chatStore
+            await Task {
+                await store.loadConversations()
+                await store.refreshSelectedConversation()
+            }.value
+        case .brain:
+            let store = brainStore
+            await Task { await store.loadLibrary() }.value
+        case .code:
+            // Projects are stored on this device. Only an empty library is
+            // re-read, which retries a failed read; re-reading a listed one
+            // could list an older copy of a project whose edit is still saving.
+            guard codeStore.projects.isEmpty else { return }
+            let store = codeStore
+            await Task { await store.loadProjects() }.value
         }
     }
 
@@ -295,16 +490,48 @@ struct ShellSidebar: View {
         dismissCompactSidebar()
     }
 
+    /// Tapping the open chat shows it again and re-reads what was saved in it
+    /// elsewhere: select(_:) would retire a send still being prepared before
+    /// finding nothing to load. It still runs when this sidebar is opening
+    /// another chat, so the tap wins over it.
     private func selectConversation(_ id: String) {
         retireDeletion()
         dismissCompactSidebar()
+        if id == chatStore.selectedConversationID,
+           requestedConversationID == nil || requestedConversationID == id {
+            requestedConversationID = nil
+            let store = chatStore
+            Task { await store.refreshSelectedConversation() }
+            return
+        }
+        requestedConversationID = id
         Task {
             await chatStore.select(id)
+            // A choice that failed, was refused or was overtaken never opens;
+            // it must not turn the next tap on the open chat into a select.
+            if requestedConversationID == id { requestedConversationID = nil }
         }
+    }
+
+    private func openProject(_ project: CodeWorkspaceProject) {
+        retireDeletion()
+        codeStore.open(project)
+        dismissCompactSidebar()
+    }
+
+    /// Chooses the source; a second tap from here never clears the choice.
+    /// The Brain screen's own row and "All sources" undo it.
+    private func chooseSource(_ source: BrainDocument) {
+        retireDeletion()
+        if !brainStore.selectedDocumentIDs.contains(source.id) {
+            brainStore.toggleSelection(source.id)
+        }
+        dismissCompactSidebar()
     }
 
     private func createConversation() {
         retireDeletion()
+        requestedConversationID = nil
         selectedProduct = .ai
         dismissCompactSidebar()
         Task {
@@ -313,6 +540,17 @@ struct ShellSidebar: View {
     }
 
     private func dismissCompactSidebar() {
+        guard isCompact else {
+            onShowDetail?()
+            return
+        }
+        closeDrawer()
+    }
+
+    /// Account and Settings open a sheet, which presents over either split
+    /// view column; showing the detail column in the same transaction would
+    /// push and present at once. Only the drawer closes.
+    private func closeDrawer() {
         guard isCompact else { return }
         withAnimation(sidebarAnimation) {
             compactSidebarPresented = false
@@ -321,11 +559,7 @@ struct ShellSidebar: View {
 
     private func closeSidebar() {
         retireDeletion()
-        if isCompact {
-            dismissCompactSidebar()
-        } else {
-            onCloseSidebar?()
-        }
+        dismissCompactSidebar()
     }
 
     private func requestDeletion(_ conversation: ChatSummary) {
@@ -392,24 +626,37 @@ private struct ProductSidebarRow: View {
     }
 }
 
-private struct ConversationSidebarRow: View {
-    let conversation: ChatSummary
+/// One Recent row: a chat, a Code project or a Brain source.
+private struct RecentSidebarRow: View {
+    let title: String
+    let systemImage: String
+    let accentsIcon: Bool
     let isSelected: Bool
+    /// A chat whose transcript is still being read after it was chosen.
+    var isOpening = false
 
     @Environment(PreferencesStore.self) private var preferences
 
     var body: some View {
         SidebarSelectionSurface(isSelected: isSelected) {
             HStack(spacing: 11) {
-                Image(systemName: conversation.pinned ? "pin.fill" : "bubble.left")
-                    .font(.system(size: 14, weight: .medium))
-                    .frame(width: 22)
-                    .foregroundStyle(
-                        conversation.pinned ? preferences.palette.accent : preferences.palette.textMuted
-                    )
-                    .accessibilityHidden(true)
+                Group {
+                    if isOpening {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(preferences.palette.textMuted)
+                    } else {
+                        Image(systemName: systemImage)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(
+                                accentsIcon ? preferences.palette.accent : preferences.palette.textMuted
+                            )
+                    }
+                }
+                .frame(width: 22)
+                .accessibilityHidden(true)
 
-                Text(conversation.title)
+                Text(title)
                     .font(.subheadline.weight(isSelected ? .semibold : .regular))
                     .foregroundStyle(preferences.palette.textPrimary)
                     .lineLimit(2)
@@ -423,6 +670,7 @@ private struct ConversationSidebarRow: View {
         .contentShape(.rect)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+        .accessibilityValue(isOpening ? Text(ShellStrings.loading) : Text(verbatim: ""))
     }
 }
 

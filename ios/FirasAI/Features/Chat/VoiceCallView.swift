@@ -1,4 +1,5 @@
 import AVFoundation
+import Combine
 import SwiftUI
 import UIKit
 
@@ -18,12 +19,15 @@ enum VoiceCallPhase: Sendable, Equatable {
 
 struct VoiceCallView: View {
     var onEnd: (() -> Void)? = nil
+    /// Offered when the call needs an account: the shell closes the call
+    /// and opens sign-in.
+    var onSignIn: (() -> Void)? = nil
 
     @Environment(PreferencesStore.self) private var preferences
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    @AppStorage("callVoice") private var selectedVoice = "cedar"
     @State private var controller = LiveVoiceController()
 
     var body: some View {
@@ -42,6 +46,14 @@ struct VoiceCallView: View {
                     .padding(.top, 28)
                 statusMessage
                     .padding(.top, 9)
+                if controller.connectionState == .failed("voice_microphone_denied") {
+                    openSettingsButton
+                        .padding(.top, 14)
+                }
+                if controller.connectionState == .failed("voice_signin_required"), let onSignIn {
+                    signInButton(onSignIn)
+                        .padding(.top, 14)
+                }
                 Spacer(minLength: 26)
                 callControls
             }
@@ -51,13 +63,22 @@ struct VoiceCallView: View {
         }
         .tint(preferences.palette.accent)
         .environment(\.layoutDirection, preferences.language.layoutDirection)
+        // A cover is not guaranteed to inherit the root's text size.
+        .dynamicTypeSize(preferences.resolvedTypeSize)
         .task {
             await controller.start(
                 language: preferences.language,
-                voice: selectedVoice
+                voice: preferences.callVoice
             )
         }
+        .onChange(of: controller.connectionState, initial: true) {
+            updateDeviceHolds()
+        }
+        .onChange(of: controller.usesReceiver) {
+            updateDeviceHolds()
+        }
         .onDisappear {
+            releaseDeviceHolds()
             Task { await controller.end() }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
@@ -69,8 +90,72 @@ struct VoiceCallView: View {
             else { return }
             Task { await controller.handleInterruption() }
         }
+        // These three can be posted off the main thread.
+        .onReceive(
+            NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)
+                .receive(on: DispatchQueue.main)
+        ) { notification in
+            let raw = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+            controller.handleRouteChange(
+                reason: raw.flatMap(AVAudioSession.RouteChangeReason.init(rawValue:)) ?? .unknown
+            )
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(for: .AVAudioEngineConfigurationChange)
+                .receive(on: DispatchQueue.main)
+        ) { notification in
+            controller.handleEngineConfigurationChange(notification.object)
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(for: AVAudioSession.mediaServicesWereResetNotification)
+                .receive(on: DispatchQueue.main)
+        ) { _ in
+            controller.handleMediaServicesReset()
+        }
     }
 
+    /// Auto-Lock would send the app to the background, and leaving the
+    /// foreground ends the call, so the screen stays awake while it is live.
+    /// On the earpiece the proximity sensor darkens it, so a cheek cannot
+    /// press End or Mute.
+    private func updateDeviceHolds() {
+        let live = controller.connectionState == .connecting || controller.connectionState == .connected
+        UIApplication.shared.isIdleTimerDisabled = live
+        UIDevice.current.isProximityMonitoringEnabled = live && controller.usesReceiver
+    }
+
+    private func releaseDeviceHolds() {
+        UIApplication.shared.isIdleTimerDisabled = false
+        UIDevice.current.isProximityMonitoringEnabled = false
+    }
+
+    /// Both buttons are accent-filled, so their labels take onAccent, as
+    /// SettingsDoneButton does: the system white falls to 2.3-2.6:1 on the
+    /// accent of the dark themes.
+    private var openSettingsButton: some View {
+        Button {
+            guard let settingsURL = URL(string: UIApplication.openSettingsURLString) else { return }
+            openURL(settingsURL)
+        } label: {
+            Text(ChatStrings.voiceOpenSettings)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(preferences.palette.onAccent)
+                .padding(.horizontal, 18)
+                .frame(minHeight: 44)
+        }
+        .modifier(FirasGlassControlStyle(prominent: true))
+    }
+
+    private func signInButton(_ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(ChatStrings.voiceSignIn)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(preferences.palette.onAccent)
+                .padding(.horizontal, 18)
+                .frame(minHeight: 44)
+        }
+        .modifier(FirasGlassControlStyle(prominent: true))
+    }
     private var callHeader: some View {
         VStack(spacing: 8) {
             FirasBrandMark(size: 31, showsWordmark: true)

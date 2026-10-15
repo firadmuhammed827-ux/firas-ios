@@ -22,6 +22,115 @@ private nonisolated struct ActiveChatJobRecord: Codable, Equatable, Sendable {
     let startedAt: Date
     var cancelRequested: Bool?
     var skillIDs: [String]?
+    /// The wire form of a message carries no local state; persist() and
+    /// persistedJob() carry it here, so a resumed row keeps its own.
+    var states: [ChatMessageState]? = nil
+}
+
+private nonisolated struct GuestTranscriptRecord: Codable, Sendable {
+    let ownerID: String
+    let conversationID: String
+    let title: String
+    let messages: [ChatMessage]
+    /// The wire form of a message carries no local state, so it rides beside.
+    let states: [ChatMessageState]
+}
+
+/// The current guest's transcript, on this device only: thumbnails but no
+/// full images or file text, the newest turns within a size cap, protected
+/// until first unlock and excluded from backup. Every operation carries the
+/// store's generation, so an older save can never revive a cleared copy.
+private actor GuestTranscriptStorage {
+    private let fileURL: URL
+    private let maximumBytes = 1_000_000
+    private var appliedGeneration = 0
+
+    init(directory: URL?) {
+        let folder: URL
+        if let directory {
+            folder = directory
+        } else {
+            let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+                ?? FileManager.default.temporaryDirectory
+            folder = base.appendingPathComponent("FirasAI/GuestChat", isDirectory: true)
+        }
+        fileURL = folder.appendingPathComponent("transcript.json", isDirectory: false)
+    }
+
+    func load(ownerID: String) -> ChatConversation? {
+        guard let data = try? Data(contentsOf: fileURL) else { return nil }
+        guard data.count <= maximumBytes,
+              let record = try? JSONDecoder().decode(GuestTranscriptRecord.self, from: data),
+              record.ownerID == ownerID, record.conversationID.hasPrefix("guest-"),
+              record.states.count == record.messages.count else {
+            // Another guest identity's copy, or one that cannot be read, is
+            // never shown; it is removed instead.
+            try? FileManager.default.removeItem(at: fileURL)
+            return nil
+        }
+        var messages = record.messages
+        for index in messages.indices { messages[index].state = record.states[index] }
+        return ChatConversation(id: record.conversationID, title: record.title, messages: messages)
+    }
+
+    func save(_ conversation: ChatConversation, ownerID: String, generation: Int) {
+        guard generation > appliedGeneration else { return }
+        appliedGeneration = generation
+        let encoder = JSONEncoder()
+        // Keep the newest whole messages that fit; each also costs its state
+        // and separators in the record.
+        var budget = maximumBytes - 4_096
+        var kept: [ChatMessage] = []
+        for message in conversation.messages.reversed() {
+            var stored = message
+            stored.images = nil
+            stored.fileText = nil
+            var size = (try? encoder.encode(stored).count) ?? maximumBytes
+            if size + 16 > budget, stored.reasoning != nil {
+                // Reasoning is the first thing a long turn gives up.
+                stored.reasoning = nil
+                size = (try? encoder.encode(stored).count) ?? maximumBytes
+            }
+            // A turn larger than the whole file is left out on its own, so it
+            // cannot take every earlier turn with it.
+            if size + 16 > maximumBytes - 4_096 { continue }
+            guard size + 16 <= budget else { break }
+            budget -= size + 16
+            kept.append(stored)
+        }
+        kept.reverse()
+        guard !kept.isEmpty else {
+            try? FileManager.default.removeItem(at: fileURL)
+            return
+        }
+        let record = GuestTranscriptRecord(ownerID: ownerID, conversationID: conversation.id,
+            title: conversation.title, messages: kept, states: kept.map { $0.state })
+        guard let data = try? encoder.encode(record), data.count <= maximumBytes else { return }
+        do {
+            try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true)
+            // Data protection is an iOS file attribute; the macOS test host
+            // writes the same file without it.
+            #if os(iOS)
+            let options: Data.WritingOptions = [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
+            #else
+            let options: Data.WritingOptions = [.atomic]
+            #endif
+            try data.write(to: fileURL, options: options)
+            var url = fileURL
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            try url.setResourceValues(values)
+        } catch {
+            // A device copy is a convenience; the transcript on screen stays.
+        }
+    }
+
+    func clear(generation: Int) {
+        guard generation > appliedGeneration else { return }
+        appliedGeneration = generation
+        try? FileManager.default.removeItem(at: fileURL)
+    }
 }
 
 nonisolated struct ChatStopRequest: Equatable, Sendable {
@@ -51,6 +160,9 @@ final class ChatStore {
     private(set) var jobPhase: ChatJobPhase?
     private(set) var lastAcceptedSend: ChatSendReceipt?
     private(set) var unavailableReceiptCID: String?
+    /// A saved answer that nothing is observing: its admission or Stop could
+    /// not be confirmed. Reconnect re-reads it; nothing is sent again.
+    private(set) var reconnectableReceiptCID: String?
     private(set) var composerDraft = ChatDraftSelection(emptyContext: DraftContextSelection()) {
         didSet {
             guard oldValue.text != composerDraft.text else { return }
@@ -75,13 +187,16 @@ final class ChatStore {
     @ObservationIgnored private var activeIdentityGeneration: Int?
     @ObservationIgnored private var loadGeneration = 0
     @ObservationIgnored private var selectionGeneration = 0
-    @ObservationIgnored private var pendingSelectionID: String?
+    /// Observed: the sidebar marks the chat that is still opening.
+    private var pendingSelectionID: String?
     @ObservationIgnored private var stopRequestedCID: String?
     @ObservationIgnored private var resumePreparationID: UUID?
     @ObservationIgnored private var cancellationPreparationID: UUID?
     @ObservationIgnored private var sendingConversationID: String?
     @ObservationIgnored private var deletingConversations: [String: UUID] = [:]
     @ObservationIgnored private let recoveryDelays: [Duration]
+    @ObservationIgnored private let guestTranscripts: GuestTranscriptStorage
+    @ObservationIgnored private var guestTranscriptGeneration = 0
 
     private static let activeJobKey = "firas.ios.active-chat-job.v1"
 
@@ -89,13 +204,15 @@ final class ChatStore {
         session: SessionStore,
         api: FirasAPI = FirasAPI(),
         defaults: UserDefaults = .standard,
-        recoveryDelays: [Duration] = [.milliseconds(350), .milliseconds(700)]
+        recoveryDelays: [Duration] = [.milliseconds(350), .milliseconds(700)],
+        guestTranscriptDirectory: URL? = nil
     ) {
         self.session = session
         self.api = api
         self.defaults = defaults
         self.difficultyLevels = ChatDifficultyLevelRepository(defaults: defaults)
         self.recoveryDelays = recoveryDelays
+        self.guestTranscripts = GuestTranscriptStorage(directory: guestTranscriptDirectory)
     }
 
     var messages: [ChatMessage] {
@@ -108,19 +225,52 @@ final class ChatStore {
         return selectedConversation?.id
     }
 
+    /// The chat `select(_:)` is still reading; nil once it opens, fails or
+    /// is overtaken by another choice.
+    var loadingConversationID: String? {
+        guard loadedOwnerID == session.identityID, loadedIdentityGeneration == session.identityGeneration else { return nil }
+        return pendingSelectionID
+    }
+
     var canForgetUnavailableReceipt: Bool {
         unavailableReceiptCID != nil && unavailableReceiptCID == activeCID && !isSending &&
             pollTask == nil && resumePreparationID == nil && cancellationPreparationID == nil &&
             loadedOwnerID == session.identityID && loadedIdentityGeneration == session.identityGeneration && !session.isWorking
     }
 
+    /// Reconnect is offered for any saved answer nothing is observing; local
+    /// removal (above) only once the server proved its receipt missing.
+    var canReconnectActiveJob: Bool {
+        reconnectableReceiptCID != nil && reconnectableReceiptCID == activeCID && !isSending &&
+            pollTask == nil && resumePreparationID == nil && cancellationPreparationID == nil &&
+            loadedOwnerID == session.identityID && loadedIdentityGeneration == session.identityGeneration && !session.isWorking
+    }
+
+    /// An empty answer nothing observes is not drawn as running beside the
+    /// Reconnect control; the stored row is untouched, so the next real
+    /// status (or Remove) still decides it. While the banner already says the
+    /// whole sentence, the row names only its state.
+    func displayedMessage(_ message: ChatMessage) -> ChatMessage {
+        guard message.role == .assistant, message.state == .sending, message.content.isEmpty,
+              canReconnectActiveJob, message.cid == reconnectableReceiptCID else { return message }
+        var shown = message
+        let sentence = unconfirmedMessage(languageCode: message.lang)
+        shown.content = errorMessage == sentence ? unconfirmedStatus(languageCode: message.lang) : sentence
+        return shown
+    }
+
     func forgetUnavailableReceipt(cid: String, expectedOwnerID: String, expectedIdentityGeneration: Int) {
         guard canForgetUnavailableReceipt, activeCID == cid,
               ownsActiveOperation(ownerID: expectedOwnerID, cid: cid, identityGeneration: expectedIdentityGeneration),
               var record = persistedJob(), record.ownerID == expectedOwnerID, record.cid == cid else { return }
+        // Text already shown stays an answer; only an empty turn is unfinished.
         updateAssistant(in: &record.messages, id: record.assistantMessageID) {
-            $0.state = .failed
-            if $0.content.isEmpty { $0.content = unconfirmedMessage(languageCode: $0.lang) }
+            if $0.content.isEmpty {
+                $0.state = .failed
+                $0.content = unconfirmedMessage(languageCode: $0.lang)
+            } else if $0.state == .sending {
+                $0.state = .delivered
+            }
         }
         reflect(record)
         clearPersistedJob()
@@ -128,8 +278,9 @@ final class ChatStore {
         // The server may still finish; only a new explicit Send gets a new CID.
         composerDraft.retireSubmission(cid: cid)
         activeCID = nil; activeJobID = nil; activeIdentityGeneration = nil
-        stopRequestedCID = nil; unavailableReceiptCID = nil; jobPhase = nil
+        stopRequestedCID = nil; unavailableReceiptCID = nil; reconnectableReceiptCID = nil; jobPhase = nil
         errorMessage = nil
+        saveGuestTranscript()
     }
 
     var draftText: String {
@@ -171,8 +322,8 @@ final class ChatStore {
             errorMessage = language == .arabic ? "الطلب أطول من الحد المدعوم. قسّمه دون حذف شروطك." : "The request is too long. Split it without dropping your constraints."
             return nil
         }
-        guard !isSending, activeJobID == nil else {
-            errorMessage = "هناك إجابة قيد التنفيذ. أوقفها قبل إرسال رسالة جديدة."
+        guard !isSending, activeJobID == nil, !canReconnectActiveJob else {
+            errorMessage = canReconnectActiveJob ? reconnectRefusal(language) : answerInProgressRefusal(language)
             return nil
         }
         guard !session.isWorking, let scope = difficultyScope(for: snapshot) else { return nil }
@@ -278,7 +429,9 @@ final class ChatStore {
         composerDraft.accept(receipt, currentOwnerID: session.identityID, identityGeneration: session.identityGeneration)
     }
 
-    func loadConversations() async {
+    /// `clearsError` is false for a read nobody asked for, the return from the
+    /// background: a quota or failure notice stays until the reader closes it.
+    func loadConversations(clearsError: Bool = true) async {
         adoptCurrentOwnerIfNeeded()
         // A read begun after a session operation satisfies its pending reload.
         if !session.isWorking { reloadsAfterSessionOperation = false }
@@ -291,7 +444,7 @@ final class ChatStore {
         let selectionAtLoad = selectionGeneration
         let ownerID = session.identityID
         isLoading = true
-        errorMessage = nil
+        if clearsError { errorMessage = nil }
         defer {
             if loadGeneration == generation {
                 isLoading = false
@@ -308,6 +461,14 @@ final class ChatStore {
                     guard confirmLoad(generation, ownerID: ownerID),
                           !session.isWorking, !Task.isCancelled else { return }
                     conversations = loadedConversations
+                    // A chat opened before the list arrived (a notification at
+                    // launch) is checked against it too. One with an answer still
+                    // running in it stays until that answer settles.
+                    if let openID = selectedConversation?.id, isOtherProductConversation(openID),
+                       !(isSending && sendingConversationID == openID),
+                       persistedJob()?.localConversationID != openID {
+                        selectedConversation = nil
+                    }
                     let firstAIConversation = conversations.first {
                         !$0.agent && !$0.codeProj && !$0.brainNb
                     }
@@ -326,8 +487,15 @@ final class ChatStore {
             }
         } else {
             conversations = []
+            // A guest's transcript lives only on this device. Only the same
+            // guest identity's copy is restored.
+            var restored: ChatConversation?
+            if selectedConversation == nil, let ownerID {
+                restored = await guestTranscripts.load(ownerID: ownerID)
+                guard confirmLoad(generation, ownerID: ownerID), !Task.isCancelled else { return }
+            }
             if selectedConversation == nil {
-                selectedConversation = makeGuestConversation()
+                selectedConversation = restored.map { settledGuestConversation($0) } ?? makeGuestConversation()
             }
         }
 
@@ -351,6 +519,9 @@ final class ChatStore {
         composerDraft.retireSubmission()
         let ownerID = session.identityID
         guard session.isAuthenticated else { return }
+        // The chat read carries no product flags, so the list decides: a Code
+        // project or Brain notebook never becomes this transcript.
+        guard !isOtherProductConversation(id) else { return }
         selectionGeneration &+= 1
         let generation = selectionGeneration
         pendingSelectionID = nil
@@ -364,7 +535,8 @@ final class ChatStore {
             guard selectionGeneration == generation,
                   confirmCurrentOwner(ownerID), !Task.isCancelled,
                   deletingConversations[id] == nil else { return }
-            guard conversation.id == id, conversation.agent != true,
+            // The list may have arrived while the chat was read.
+            guard conversation.id == id, !isOtherProductConversation(id), conversation.agent != true,
                   conversation.codeProj != true, conversation.brainNb != true else { return }
             selectedConversation = conversation
         } catch {
@@ -372,6 +544,67 @@ final class ChatStore {
                   confirmCurrentOwner(ownerID), !Task.isCancelled,
                   deletingConversations[id] == nil else { return }
             errorMessage = message(for: error)
+        }
+    }
+
+    /// Re-reads the open chat, so turns saved elsewhere (the website, another
+    /// device) appear without opening it again. A chat an answer, a saved
+    /// receipt, a deletion or a newer choice owns is left alone, as is one
+    /// that changed here during the read. Turns this device settled without
+    /// saving (failed or stopped before the server had them) stay, and the
+    /// draft and its Send reservation are never touched.
+    func refreshSelectedConversation() async {
+        adoptCurrentOwnerIfNeeded()
+        guard session.isAuthenticated, !session.isWorking, pendingSelectionID == nil,
+              let ownerID = session.identityID, let before = selectedConversation,
+              refreshPermitted(before.id) else { return }
+        let id = before.id
+        let generation = selectionGeneration
+        do {
+            let latest = try await api.chat(id: id)
+            guard selectionGeneration == generation, confirmCurrentOwner(ownerID), !Task.isCancelled,
+                  !session.isWorking, pendingSelectionID == nil, selectedConversation == before,
+                  refreshPermitted(id), latest.id == id, latest.agent != true,
+                  latest.codeProj != true, latest.brainNb != true else { return }
+            var refreshed = latest.messages
+            let unsaved = Set(before.messages.compactMap { message in
+                message.role == .assistant && (message.state == .failed || message.state == .stopped)
+                    ? message.cid : nil
+            })
+            for message in before.messages {
+                guard let cid = message.cid, unsaved.contains(cid) else { continue }
+                if let index = refreshed.firstIndex(where: { $0.cid == cid && $0.role == message.role }) {
+                    // A saved half wins, unless it is an empty answer this device can fill.
+                    if message.role == .assistant, refreshed[index].content.isEmpty, !message.content.isEmpty {
+                        refreshed[index] = message
+                    }
+                } else if let index = refreshed.lastIndex(where: { $0.cid == cid }) {
+                    refreshed.insert(message, at: index + 1)
+                } else {
+                    refreshed.append(message)
+                }
+            }
+            let title = latest.messages.isEmpty || latest.title == "New chat" ? before.title : latest.title
+            guard title != before.title || !sameTurns(refreshed, before.messages) else { return }
+            selectedConversation = ChatConversation(id: id, title: title, messages: refreshed)
+            updateSummaryTitle(id: id, title: title)
+        } catch {
+            // Nothing to report: the open transcript is still the last one read.
+        }
+    }
+
+    private func refreshPermitted(_ id: String) -> Bool {
+        !isOtherProductConversation(id) && deletingConversations[id] == nil &&
+            !(isSending && sendingConversationID == id) && persistedJob()?.localConversationID != id
+    }
+
+    /// Ids of rows read without a cid are new on every read, so turns are
+    /// compared by what they show.
+    private func sameTurns(_ lhs: [ChatMessage], _ rhs: [ChatMessage]) -> Bool {
+        lhs.count == rhs.count && zip(lhs, rhs).allSatisfy {
+            $0.role == $1.role && $0.cid == $1.cid && $0.state == $1.state && $0.content == $1.content &&
+                $0.reasoning == $1.reasoning && $0.alts == $1.alts && $0.altAt == $1.altAt &&
+                $0.images == $1.images && $0.files == $1.files
         }
     }
 
@@ -387,10 +620,19 @@ final class ChatStore {
 
         if !session.isAuthenticated {
             guard pollTask == nil, activeJobID == nil else {
-                errorMessage = "أوقف الإجابة الجارية قبل بدء محادثة ضيف جديدة."
+                // An unconfirmed answer offers Reconnect, not Stop.
+                let english = turnLanguage(selectedConversation?.messages.last?.lang) == .english
+                errorMessage = canReconnectActiveJob
+                    ? (english ? "The current answer could not be confirmed. Tap “Check original answer” before starting a new guest chat."
+                        : "تعذّر تأكيد الرد الحالي. اضغط «التحقّق من الرد الأصلي» قبل بدء محادثة ضيف جديدة.")
+                    : (english ? "Stop the current answer before starting a new guest chat."
+                        : "أوقف الإجابة الجارية قبل بدء محادثة ضيف جديدة.")
                 return
             }
             selectedConversation = makeGuestConversation()
+            // Only an explicit New chat discards the guest's device copy; the
+            // first-turn creation inside Send keeps it.
+            if retireDraftSubmission { clearGuestTranscript() }
             return
         }
 
@@ -449,9 +691,14 @@ final class ChatStore {
         let unresolvedReceipt = record?.ownerID == request.ownerID &&
             (record?.serverChatID == id || record?.localConversationID == id)
         guard !pendingAnswer, !unresolvedReceipt else {
-            errorMessage = language == .arabic
-                ? "أوقف الإجابة الجارية قبل حذف المحادثة."
-                : "Stop the current answer before deleting this chat."
+            // An unconfirmed answer offers Reconnect, not Stop.
+            errorMessage = canReconnectActiveJob
+                ? (language == .arabic
+                    ? "تعذّر تأكيد الرد الحالي. اضغط «التحقّق من الرد الأصلي» قبل حذف المحادثة."
+                    : "The current answer could not be confirmed. Tap “Check original answer” before deleting this chat.")
+                : (language == .arabic
+                    ? "أوقف الإجابة الجارية قبل حذف المحادثة."
+                    : "Stop the current answer before deleting this chat.")
             return false
         }
         guard deletingConversations[id] == nil else { return false }
@@ -466,7 +713,7 @@ final class ChatStore {
             try await api.deleteChat(id: id)
         } catch {
             guard ownsDeletion(request), deletingConversations[id] == request.id else { return false }
-            errorMessage = message(for: error)
+            errorMessage = message(for: error, language: language)
             return false
         }
         guard ownsDeletion(request), deletingConversations[id] == request.id else { return false }
@@ -507,7 +754,7 @@ final class ChatStore {
                   conversations.contains(where: {
                       $0.id == first.id && !$0.agent && !$0.codeProj && !$0.brainNb
                   }) else { return true }
-            errorMessage = message(for: error)
+            errorMessage = message(for: error, language: language)
         }
         return true
     }
@@ -521,6 +768,12 @@ final class ChatStore {
     private var selectedConversationIsBeingDeleted: Bool {
         guard let id = selectedConversation?.id else { return false }
         return deletingConversations[id] != nil
+    }
+
+    /// A row the list marks as another product's, such as a Code project or
+    /// a Brain notebook.
+    private func isOtherProductConversation(_ id: String) -> Bool {
+        conversations.contains { $0.id == id && ($0.agent || $0.codeProj || $0.brainNb) }
     }
 
     /// Explicit media creation needs a server-owned ordinary Chat and a saved
@@ -547,11 +800,15 @@ final class ChatStore {
         guard !cleanPrompt.isEmpty, cleanPrompt.utf16.count <= 60_000 else { return nil }
         guard !isSending, activeJobID == nil, pollTask == nil,
                persistedJob()?.ownerID != expectedOwnerID,
-               !selectedConversationIsBeingDeleted else { return nil }
+               !selectedConversationIsBeingDeleted else {
+            if canReconnectActiveJob { errorMessage = reconnectRefusal(language) }
+            return nil
+        }
 
         let cid = stableIdentifier()
         activeCID = cid
         unavailableReceiptCID = nil
+        reconnectableReceiptCID = nil
         activeIdentityGeneration = identityGeneration
         sendingConversationID = selectedConversation?.id
         isSending = true
@@ -578,7 +835,7 @@ final class ChatStore {
             }.value
             guard ownsPreparation() else { return nil }
             if sourceProblem != nil {
-                errorMessage = language == .arabic ? "تعذّر قراءة الصورة. اختَر صورة ثانية وحاول مجدداً." : "The image could not be read. Choose another image and try again."
+                errorMessage = language == .arabic ? "تعذّر قراءة الصورة. اختر صورة أخرى وأعد المحاولة." : "The image could not be read. Choose another image and try again."
                 return nil
             }
             let credentials = try await api.mediaCredentialSnapshot()
@@ -597,7 +854,10 @@ final class ChatStore {
                 // website after the current native selection was loaded.
                 var conversation = try await api.chat(id: selectedID)
                 guard ownsPreparation() else { return nil }
-                guard conversation.id == selectedID, conversation.agent != true,
+                // The chat read may carry no product flags; the list, which
+                // may have arrived during it, decides as well.
+                guard conversation.id == selectedID, !isOtherProductConversation(selectedID),
+                      conversation.agent != true,
                       conversation.codeProj != true, conversation.brainNb != true else {
                     errorMessage = language == .arabic ? "ابدأ محادثة جديدة لإنشاء الوسائط." : "Start a new chat to create media."
                     return nil
@@ -625,12 +885,12 @@ final class ChatStore {
         } catch {
             guard ownsPreparation() else { return nil }
             if let apiError = error as? APIError, apiError == .invalidRequest("media_history_too_large") {
-                errorMessage = language == .arabic ? "المحادثة طويلة جداً. افتح محادثة جديدة لإنشاء الوسائط؛ نصك وصورتك بعدهن موجودات." : "This chat is too large. Open a new chat to create media; your text and image are still here."
+                errorMessage = language == .arabic ? "المحادثة طويلة جداً. افتح محادثة جديدة لإنشاء الوسائط؛ ما زال نصك وصورتك محفوظين." : "This chat is too large. Open a new chat to create media; your text and image are still here."
             } else if let apiError = error as? APIError,
                       apiError.statusCode == 401 || apiError == .invalidRequest("media_session_required") {
-                errorMessage = language == .arabic ? "سجّل الدخول مجدداً لإكمال الطلب؛ نصك وصورتك بعدهن موجودات." : "Sign in again to continue; your text and image are still here."
+                errorMessage = language == .arabic ? "سجّل الدخول مجدداً لإكمال الطلب؛ ما زال نصك وصورتك محفوظين." : "Sign in again to continue; your text and image are still here."
             } else {
-                errorMessage = language == .arabic ? "تعذّر تجهيز الطلب. تحقق من الاتصال وحاول مجدداً؛ نصك وصورتك بعدهن موجودات." : "The request could not be prepared. Check your connection and try again; your text and image are still here."
+                errorMessage = language == .arabic ? "تعذّر تجهيز الطلب. تحقق من الاتصال وأعد المحاولة؛ ما زال نصك وصورتك محفوظين." : "The request could not be prepared. Check your connection and try again; your text and image are still here."
             }
             return nil
         }
@@ -678,15 +938,20 @@ final class ChatStore {
             return nil
         }
         guard activeJobID == nil, pollTask == nil, !isSending, !selectedConversationIsBeingDeleted else {
-            errorMessage = "هناك إجابة قيد التنفيذ. أوقفها قبل إرسال رسالة جديدة."
+            errorMessage = canReconnectActiveJob ? reconnectRefusal(language) : answerInProgressRefusal(language)
             return nil
         }
         guard let ownerID else {
-            errorMessage = "تعذّر بدء جلسة الضيف. تحقق من الاتصال وحاول مجدداً."
+            errorMessage = language == .arabic
+                ? "تعذّر بدء جلسة الضيف. تحقّق من الاتصال ثم أعد المحاولة."
+                : "The guest session could not start. Check your connection, then try again."
             return nil
         }
         guard persistedJob()?.ownerID != ownerID else {
-            errorMessage = language == .arabic ? "تجري استعادة الإجابة الحالية. انتظر اكتمالها قبل إرسال طلب جديد." : "Restoring the current answer. Wait before sending another request."
+            // An unobserved saved answer points to Reconnect; one being
+            // restored right now only needs a moment.
+            errorMessage = canReconnectActiveJob ? reconnectRefusal(language)
+                : (language == .arabic ? "تجري استعادة الإجابة الحالية. انتظر اكتمالها قبل إرسال طلب جديد." : "Restoring the current answer. Wait before sending another request.")
             return nil
         }
 
@@ -712,6 +977,7 @@ final class ChatStore {
         let cid = stableIdentifier()
         activeCID = cid
         unavailableReceiptCID = nil
+        reconnectableReceiptCID = nil
         let identityGeneration = session.identityGeneration
         activeIdentityGeneration = identityGeneration
         var expectedSelection = selectionGeneration
@@ -872,7 +1138,10 @@ final class ChatStore {
             }
         } catch {
             guard ownsActiveOperation(ownerID: ownerID, cid: cid, identityGeneration: identityGeneration) else { return }
-            isSending = true
+            // Nothing observes the job now: offer Reconnect, which retries the
+            // saved Stop, instead of leaving the composer on Stop.
+            isSending = false
+            reconnectableReceiptCID = cid
             errorMessage = stopUnconfirmedMessage(languageCode: record.messages.last?.lang)
         }
     }
@@ -889,6 +1158,10 @@ final class ChatStore {
         let preparationID = UUID()
         resumePreparationID = preparationID
         let identityGeneration = session.identityGeneration
+        // Re-observing retires the previous "could not be confirmed" notice;
+        // a failure below offers Reconnect again.
+        if reconnectableReceiptCID == record.cid { errorMessage = nil }
+        reconnectableReceiptCID = nil
         activeCID = record.cid
         activeIdentityGeneration = identityGeneration
         let selectionAtResume = selectionGeneration
@@ -906,8 +1179,18 @@ final class ChatStore {
         } catch {
             guard ownsActiveOperation(ownerID: ownerID, cid: record.cid, identityGeneration: identityGeneration),
                   resumePreparationID == preparationID else { return }
-            errorMessage = message(for: error)
+            reconnectableReceiptCID = record.cid
+            errorMessage = message(for: error, language: turnLanguage(record.messages.last?.lang))
         }
+    }
+
+    /// Returning to the foreground re-observes a saved answer that nothing is
+    /// watching, as Reconnect would, without moving the reader out of the
+    /// conversation they have open. A pending load or reload does it instead.
+    func resumeAfterActivation() async {
+        guard loadedOwnerID == session.identityID, loadedIdentityGeneration == session.identityGeneration,
+              !isLoading, !session.isWorking, !reloadsAfterSessionOperation else { return }
+        await resumeActiveJob(keepingOpenConversation: true)
     }
 
     private func resumeRecord(_ initialRecord: ActiveChatJobRecord, preparationID: UUID,
@@ -930,7 +1213,7 @@ final class ChatStore {
             } catch {
                 guard ownsActiveOperation(ownerID: record.ownerID, cid: record.cid, identityGeneration: identityGeneration),
                       resumePreparationID == preparationID else { return }
-                errorMessage = message(for: error)
+                errorMessage = message(for: error, language: turnLanguage(record.messages.last?.lang))
             }
         } else if selectionGeneration == selectionAtResume, !keepingOpenConversation || selectedConversation == nil ||
                     selectedConversation?.id == record.localConversationID {
@@ -1007,7 +1290,7 @@ final class ChatStore {
             }
         } catch {
             guard ownsActiveOperation(ownerID: ownerID, cid: cid, identityGeneration: identityGeneration) else { return }
-            failBeforeStart(message: message(for: error), assistantID: assistantMessageID)
+            failBeforeStart(message: message(for: error, language: language), assistantID: assistantMessageID)
         }
     }
 
@@ -1062,7 +1345,7 @@ final class ChatStore {
                     completeStopBeforeEnqueue(cid: cid)
                     return
                 }
-                failBeforeStart(message: message(for: error), assistantID: assistantMessageID)
+                failBeforeStart(message: message(for: error, language: language), assistantID: assistantMessageID)
                 return
             }
         }
@@ -1143,13 +1426,14 @@ final class ChatStore {
         // Persist the original CID before the sole admission. An empty job ID
         // permits receipt GET only after a lost response or process restart.
         guard persist(record) else {
-            failBeforeStart(message: language == .arabic ? "تعذّر حفظ مرجع الرد بأمان. مسودتك بعدها موجودة." : "The current answer could not be stored safely. Your draft stays.", assistantID: assistantMessageID)
+            failBeforeStart(message: language == .arabic ? "تعذّر حفظ مرجع الرد بأمان. ما زالت مسودتك محفوظة." : "The current answer could not be stored safely. Your draft stays.", assistantID: assistantMessageID)
             return
         }
         do {
             let start = try await api.startChatJob(jobRequest)
             guard ownsActiveOperation(ownerID: ownerID, cid: cid, identityGeneration: identityGeneration) else { return }
             unavailableReceiptCID = nil
+            reconnectableReceiptCID = nil
             guard start.ok, validJobID(start.jobId), start.phase != .unknown else {
                 await recoverAdmission(record: record, identityGeneration: identityGeneration)
                 return
@@ -1161,7 +1445,7 @@ final class ChatStore {
             if definiteAdmissionRejection(error) {
                 clearPersistedJob()
                 if stopRequestedCID == cid { completeStopBeforeEnqueue(cid: cid) }
-                else { failBeforeStart(message: message(for: error), assistantID: assistantMessageID) }
+                else { failBeforeStart(message: message(for: error, language: language), assistantID: assistantMessageID) }
             } else {
                 // Transport, cancellation, 408/409 and server failures cannot
                 // prove that admission did not happen. Never repeat the POST.
@@ -1179,6 +1463,7 @@ final class ChatStore {
         _ = persist(record)
         activeJobID = record.jobID
         unavailableReceiptCID = nil
+        reconnectableReceiptCID = nil
         if let start {
             apply(text: start.text ?? "", reasoning: start.reasoning ?? "", to: &record,
                   reflectImmediately: !start.phase.isTerminal)
@@ -1227,11 +1512,17 @@ final class ChatStore {
             }
         }
         guard ownsActiveOperation(ownerID: record.ownerID, cid: record.cid, identityGeneration: identityGeneration) else { return }
+        if unavailableReceiptCID == record.cid,
+           await adoptSavedReceiptAnswer(record: record, identityGeneration: identityGeneration) { return }
+        guard ownsActiveOperation(ownerID: record.ownerID, cid: record.cid, identityGeneration: identityGeneration) else { return }
         record.cancelRequested = record.cancelRequested == true || stopRequestedCID == record.cid
         _ = persist(record)
         jobPhase = .unknown
         isSending = false
         pollTask = nil
+        // Reconnect is offered even when no read succeeded; local removal
+        // still needs a read that proved the receipt missing.
+        reconnectableReceiptCID = record.cid
         errorMessage = unconfirmedMessage(languageCode: record.messages.last?.lang)
         // Keep the durable receipt and editable draft. A later foreground
         // resume can perform another owned GET; no observer has a POST permit.
@@ -1253,19 +1544,48 @@ final class ChatStore {
     }
 
     private func unconfirmedMessage(languageCode: String?) -> String {
-        languageCode == "en"
+        turnLanguage(languageCode) == .english
             ? "The original answer could not be confirmed. It has not been sent again."
             : "تعذّر تأكيد الرد الأصلي. لم يُرسل الطلب مرة أخرى."
     }
 
+    private func unconfirmedStatus(languageCode: String?) -> String {
+        turnLanguage(languageCode) == .english ? "Answer not confirmed." : "الرد غير مؤكَّد."
+    }
+
     private func stopUnconfirmedMessage(languageCode: String?) -> String {
-        languageCode == "en"
+        turnLanguage(languageCode) == .english
             ? "Stop could not be confirmed. The original job has not been submitted again."
-            : "تعذّر تأكيد الإيقاف. الطلب الأصلي ما انرسل مرّة ثانية."
+            : "تعذّر تأكيد الإيقاف. لم يُرسَل الطلب الأصلي مرة أخرى."
+    }
+
+    /// Names the Reconnect control the screen shows beside it.
+    private func reconnectRefusal(_ language: AppLanguage) -> String {
+        language == .arabic
+            ? "تعذّر تأكيد الرد الحالي. اضغط «التحقّق من الرد الأصلي» قبل إرسال طلب جديد."
+            : "The current answer could not be confirmed. Tap “Check original answer” before sending a new request."
+    }
+
+    private func answerInProgressRefusal(_ language: AppLanguage) -> String {
+        language == .arabic
+            ? "هناك إجابة قيد التنفيذ. أوقفها قبل إرسال رسالة جديدة."
+            : "An answer is in progress. Stop it before sending a new message."
+    }
+
+    /// The language Settings saved; text with no turn of its own follows it.
+    private var appLanguage: AppLanguage {
+        AppLanguage(rawValue: defaults.string(forKey: "lang") ?? "") ?? .arabic
+    }
+
+    /// A turn's own language, else the app's.
+    private func turnLanguage(_ code: String?) -> AppLanguage {
+        guard let code, let saved = AppLanguage(rawValue: code) else { return appLanguage }
+        return saved
     }
 
     private func cancelKnownJob(record initialRecord: ActiveChatJobRecord, identityGeneration: Int) async {
         var record = initialRecord
+        var readSavedAnswer = false
         for attempt in 0...recoveryDelays.count {
             guard ownsActiveOperation(ownerID: record.ownerID, cid: record.cid, identityGeneration: identityGeneration),
                   activeJobID == record.jobID else { return }
@@ -1276,10 +1596,21 @@ final class ChatStore {
             }
             // A completed worker record outranks a late Stop. Preserve its
             // actual answer and canonical metadata before any cancel request.
+            var statusUnknown = false
             if let status = try? await api.chatJobStatus(id: record.jobID) {
                 guard ownsActiveOperation(ownerID: record.ownerID, cid: record.cid, identityGeneration: identityGeneration),
                       activeJobID == record.jobID else { return }
                 if await finishTerminalCancellation(status, record: &record, identityGeneration: identityGeneration) { return }
+                statusUnknown = status.phase == .unknown
+                // An id the server no longer knows may have finished hours
+                // ago; an answer saved in its chat outranks the Stop as well.
+                // It is read once, always before the 404 exit below.
+                if statusUnknown, !readSavedAnswer {
+                    readSavedAnswer = true
+                    if await adoptSavedAnswer(record: record, identityGeneration: identityGeneration) { return }
+                    guard ownsActiveOperation(ownerID: record.ownerID, cid: record.cid, identityGeneration: identityGeneration),
+                          activeJobID == record.jobID else { return }
+                }
             }
             do {
                 let response = try await api.cancelChatJob(id: record.jobID)
@@ -1296,6 +1627,13 @@ final class ChatStore {
             } catch {
                 guard ownsActiveOperation(ownerID: record.ownerID, cid: record.cid, identityGeneration: identityGeneration),
                       activeJobID == record.jobID else { return }
+                // A status that no longer knows the id and a Stop answered 404
+                // prove the job is gone (pruned six hours after it ended), so
+                // there is nothing left to stop. The row is already stopped.
+                if statusUnknown, (error as? APIError)?.statusCode == 404 {
+                    completeKnownCancellation(jobID: record.jobID, cid: record.cid)
+                    return
+                }
                 if let status = try? await api.chatJobStatus(id: record.jobID) {
                     guard ownsActiveOperation(ownerID: record.ownerID, cid: record.cid, identityGeneration: identityGeneration),
                           activeJobID == record.jobID else { return }
@@ -1305,12 +1643,14 @@ final class ChatStore {
         }
         guard ownsActiveOperation(ownerID: record.ownerID, cid: record.cid, identityGeneration: identityGeneration),
               activeJobID == record.jobID else { return }
-        // Stop intent survives without an unbounded retry coroutine. Foreground
-        // recovery or a later explicit Stop can retry this idempotent control.
+        // Stop intent survives without an unbounded retry coroutine. Reconnect,
+        // foreground recovery or a later Stop retries this idempotent control;
+        // the composer is not left on a Stop that nothing is performing.
         record.cancelRequested = true
         _ = persist(record)
-        isSending = true
+        isSending = false
         pollTask = nil
+        reconnectableReceiptCID = record.cid
         errorMessage = stopUnconfirmedMessage(languageCode: record.messages.last?.lang)
     }
 
@@ -1338,10 +1678,12 @@ final class ChatStore {
         activeCID = nil
         activeIdentityGeneration = nil
         unavailableReceiptCID = nil
+        reconnectableReceiptCID = nil
         jobPhase = .failed
         isSending = false
         pollTask = nil
         errorMessage = nil
+        saveGuestTranscript()
     }
 
     private func completeStopBeforeEnqueue(cid: String) {
@@ -1355,9 +1697,11 @@ final class ChatStore {
         activeCID = nil
         activeIdentityGeneration = nil
         unavailableReceiptCID = nil
+        reconnectableReceiptCID = nil
         jobPhase = .failed
         isSending = false
         pollTask = nil
+        saveGuestTranscript()
     }
 
     private func poll(record initialRecord: ActiveChatJobRecord, identityGeneration: Int) async {
@@ -1388,6 +1732,20 @@ final class ChatStore {
                     errorMessage = nil
                     consecutiveFailures = 0
                 }
+                // An id the server no longer knows says nothing about the
+                // answer (a finished job is pruned after six hours), so it
+                // never turns a shown answer back into a running one. Its
+                // saved chat is read before any receipt recovery.
+                if status.phase == .unknown {
+                    consecutiveUnknown += 1
+                    if consecutiveUnknown < 3 { continue }
+                    if await adoptSavedAnswer(record: record, identityGeneration: identityGeneration) { return }
+                    guard ownsActiveOperation(ownerID: record.ownerID, cid: record.cid, identityGeneration: identityGeneration)
+                    else { return }
+                    await recoverAdmission(record: record, identityGeneration: identityGeneration)
+                    return
+                }
+                consecutiveUnknown = 0
                 let reachedTerminalState = status.phase.isTerminal
                 if !reachedTerminalState {
                     jobPhase = status.phase
@@ -1399,14 +1757,6 @@ final class ChatStore {
                     reflectImmediately: !reachedTerminalState
                 )
 
-                if status.phase == .unknown {
-                    consecutiveUnknown += 1
-                    if consecutiveUnknown < 3 { continue }
-                    await recoverAdmission(record: record, identityGeneration: identityGeneration)
-                    return
-                }
-                consecutiveUnknown = 0
-
                 if status.phase.isTerminal {
                     await finish(record: record, phase: status.phase, error: status.error, identityGeneration: identityGeneration)
                     return
@@ -1415,7 +1765,7 @@ final class ChatStore {
                 guard ownsActiveOperation(ownerID: record.ownerID, cid: record.cid, identityGeneration: identityGeneration) else { return }
                 consecutiveFailures += 1
                 if consecutiveFailures == 3 {
-                    errorMessage = message(for: error)
+                    errorMessage = message(for: error, language: turnLanguage(record.messages.last?.lang))
                 }
             }
         }
@@ -1443,7 +1793,7 @@ final class ChatStore {
             } else {
                 message.state = .failed
                 if message.content.isEmpty {
-                    message.content = readableServerError(error)
+                    message.content = readableServerError(error, languageCode: message.lang)
                 }
             }
         }
@@ -1479,7 +1829,7 @@ final class ChatStore {
         else { return }
 
         if !succeeded {
-            errorMessage = readableServerError(error)
+            errorMessage = readableServerError(error, languageCode: record.messages.last?.lang)
         }
         clearPersistedJob()
         if stopRequestedCID == record.cid { stopRequestedCID = nil }
@@ -1489,6 +1839,57 @@ final class ChatStore {
         jobPhase = phase
         isSending = false
         pollTask = nil
+        saveGuestTranscript()
+    }
+
+    /// The server prunes a finished job's status after six hours, but the
+    /// worker filed its answer in the saved chat by cid. Such an answer is
+    /// adopted as complete; otherwise the caller recovers by receipt.
+    private func adoptSavedAnswer(record initialRecord: ActiveChatJobRecord, identityGeneration: Int) async -> Bool {
+        guard session.isAuthenticated, let serverChatID = initialRecord.serverChatID,
+              let canonical = try? await api.chat(id: serverChatID),
+              ownsActiveOperation(ownerID: initialRecord.ownerID, cid: initialRecord.cid, identityGeneration: identityGeneration),
+              activeJobID == initialRecord.jobID,
+              canonical.messages.contains(where: {
+                  $0.role == .assistant && $0.cid == initialRecord.cid && !$0.content.isEmpty
+              }) else { return false }
+        var record = initialRecord
+        record.messages = mergedMessages(server: canonical.messages, fallback: record.messages, cid: record.cid)
+        await finish(record: record, phase: .completed, error: nil, identityGeneration: identityGeneration)
+        return true
+    }
+
+    /// The receipt of an uncertain send is pruned with its finished job
+    /// as well. An answer filed in the saved chat by that cid proves the
+    /// admission and is adopted, instead of Reconnect offered beneath it.
+    private func adoptSavedReceiptAnswer(record initialRecord: ActiveChatJobRecord, identityGeneration: Int) async -> Bool {
+        guard session.isAuthenticated, initialRecord.jobID.isEmpty, activeJobID == nil,
+              let serverChatID = initialRecord.serverChatID,
+              let canonical = try? await api.chat(id: serverChatID),
+              ownsActiveOperation(ownerID: initialRecord.ownerID, cid: initialRecord.cid, identityGeneration: identityGeneration),
+              activeJobID == nil,
+              canonical.messages.contains(where: {
+                  $0.role == .assistant && $0.cid == initialRecord.cid && !$0.content.isEmpty
+              }) else { return false }
+        var record = initialRecord
+        record.messages = mergedMessages(server: canonical.messages, fallback: record.messages, cid: record.cid)
+        updateAssistant(in: &record.messages, id: record.assistantMessageID) { $0.state = .delivered }
+        if selectedConversation?.id == record.localConversationID {
+            selectedConversation = ChatConversation(id: canonical.id, title: canonical.title, messages: record.messages)
+            updateSummaryTitle(id: canonical.id, title: canonical.title)
+        }
+        lastAcceptedSend = ChatSendReceipt(ownerID: record.ownerID, cid: record.cid, skillIDs: record.skillIDs ?? [])
+        consumeAcceptedDraft()
+        clearPersistedJob()
+        if stopRequestedCID == record.cid { stopRequestedCID = nil }
+        activeCID = nil
+        activeIdentityGeneration = nil
+        unavailableReceiptCID = nil
+        reconnectableReceiptCID = nil
+        jobPhase = .completed
+        isSending = false
+        pollTask = nil
+        return true
     }
 
     private func apply(
@@ -1558,9 +1959,11 @@ final class ChatStore {
         activeCID = nil
         activeIdentityGeneration = nil
         unavailableReceiptCID = nil
+        reconnectableReceiptCID = nil
         jobPhase = .failed
         isSending = false
         pollTask = nil
+        saveGuestTranscript()
     }
 
     private func markActiveAssistantStopped() {
@@ -1581,7 +1984,7 @@ final class ChatStore {
     private func markAssistantStopped(in messages: inout [ChatMessage], at index: Int) {
         messages[index].state = .stopped
         if messages[index].content.isEmpty {
-            messages[index].content = "تم إيقاف الإجابة."
+            messages[index].content = FirasErrorText.stopped(english: turnLanguage(messages[index].lang) == .english)
         }
     }
 
@@ -1667,6 +2070,37 @@ final class ChatStore {
         )
     }
 
+    /// No observer survives a relaunch. A row restored mid-answer is shown
+    /// unfinished; a saved receipt, if any, re-observes it in its own place.
+    private func settledGuestConversation(_ restored: ChatConversation) -> ChatConversation {
+        var conversation = restored
+        for index in conversation.messages.indices where conversation.messages[index].state == .sending {
+            conversation.messages[index].state = .failed
+            if conversation.messages[index].content.isEmpty {
+                conversation.messages[index].content = unconfirmedMessage(languageCode: conversation.messages[index].lang)
+            }
+        }
+        return conversation
+    }
+
+    /// Copies a guest's settled transcript to this device, off the main
+    /// actor. A member's chats live on the server and never reach the file.
+    private func saveGuestTranscript() {
+        guard !session.isAuthenticated, let ownerID = session.identityID, loadedOwnerID == ownerID,
+              let conversation = selectedConversation, conversation.id.hasPrefix("guest-") else { return }
+        guestTranscriptGeneration &+= 1
+        let generation = guestTranscriptGeneration
+        let storage = guestTranscripts
+        Task { await storage.save(conversation, ownerID: ownerID, generation: generation) }
+    }
+
+    private func clearGuestTranscript() {
+        guestTranscriptGeneration &+= 1
+        let generation = guestTranscriptGeneration
+        let storage = guestTranscripts
+        Task { await storage.clear(generation: generation) }
+    }
+
     /// A cookie/session transition must never leave one account's transcript
     /// visible in another account (or in guest mode). Cancelling this local
     /// watcher does not call the server cancellation endpoint; the durable job
@@ -1697,6 +2131,7 @@ final class ChatStore {
                 conversation.messages[index].content = unconfirmedMessage(languageCode: conversation.messages[index].lang)
             }
             selectedConversation = conversation
+            saveGuestTranscript()
         }
 
         pollTask?.cancel()
@@ -1712,6 +2147,10 @@ final class ChatStore {
         if !sameOwner {
             conversations = []
             selectedConversation = nil
+            // The guest's device copy ends with that guest: a member's sign-in
+            // or a replacement guest identity clears it. Losing the identity
+            // for a moment (nil) keeps it for the same guest's return.
+            if ownerID != nil, session.isAuthenticated || loadedOwnerID != nil { clearGuestTranscript() }
         }
         activeJobID = nil
         activeCID = nil
@@ -1720,6 +2159,7 @@ final class ChatStore {
         jobPhase = nil
         lastAcceptedSend = nil
         unavailableReceiptCID = nil
+        reconnectableReceiptCID = nil
         isSending = false
         // A load that this adoption fenced, or that an operation's own guards
         // will refuse, is redone by reloadAfterSessionOperationIfNeeded.
@@ -1837,14 +2277,21 @@ final class ChatStore {
     }
 
     @discardableResult private func persist(_ record: ActiveChatJobRecord) -> Bool {
-        guard let data = try? JSONEncoder().encode(record) else { return false }
+        var stored = record
+        stored.states = record.messages.map { $0.state }
+        guard let data = try? JSONEncoder().encode(stored) else { return false }
         defaults.set(data, forKey: Self.activeJobKey)
         return defaults.data(forKey: Self.activeJobKey) == data
     }
 
     private func persistedJob() -> ActiveChatJobRecord? {
-        guard let data = defaults.data(forKey: Self.activeJobKey) else { return nil }
-        return try? JSONDecoder().decode(ActiveChatJobRecord.self, from: data)
+        guard let data = defaults.data(forKey: Self.activeJobKey),
+              var record = try? JSONDecoder().decode(ActiveChatJobRecord.self, from: data) else { return nil }
+        // A record saved before states rode beside keeps the decoded default.
+        if let states = record.states, states.count == record.messages.count {
+            for index in record.messages.indices { record.messages[index].state = states[index] }
+        }
+        return record
     }
 
     private func clearPersistedJob() {
@@ -1858,21 +2305,41 @@ final class ChatStore {
         persist(record)
     }
 
-    private func readableServerError(_ value: String?) -> String {
-        guard let value, !value.isEmpty else {
-            return "تعذّر إكمال الإجابة. حاول مجدداً."
+    /// A failed job's record is `{"error": code, "message": notice}`, the
+    /// notice already in the turn's language. It is preferred; otherwise the
+    /// code is named in the turn's language. A raw code is never shown.
+    private func readableServerError(_ value: String?, languageCode: String?) -> String {
+        let english = turnLanguage(languageCode) == .english
+        var code = value
+        var notice: String?
+        if let value, value.first == "{", let data = value.data(using: .utf8),
+           let object = try? JSONDecoder().decode([String: AppAPIValue].self, from: data) {
+            code = nil
+            if case .string(let saved)? = object["error"] { code = saved }
+            if case .string(let saved)? = object["message"] { notice = saved }
         }
-        guard value.first == "{", let data = value.data(using: .utf8),
-              let object = try? JSONDecoder().decode([String: AppAPIValue].self, from: data),
-              case .string(let message)? = object["error"]
-        else { return value }
-        return message
+        return FirasErrorText.text(code: code, notice: notice, english: english)
+            ?? FirasErrorText.answerFailed(english: english)
     }
 
-    private func message(for error: Error) -> String {
-        if let apiError = error as? APIError {
-            return apiError.errorDescription ?? "تعذّر الاتصال بالخادم."
+    /// Short next-step text in the reader's language: by HTTP status, server
+    /// code or connection problem. Server and system text is never shown.
+    private func message(for error: Error, language: AppLanguage? = nil) -> String {
+        let english = (language ?? appLanguage) == .english
+        guard let apiError = error as? APIError else { return FirasErrorText.generic(english: english) }
+        switch apiError {
+        case .httpStatus(let status, let message):
+            let code: String? = message
+            return FirasErrorText.text(status: status, code: code, english: english)
+                ?? FirasErrorText.generic(english: english)
+        case .transport(let code, _):
+            return FirasErrorText.connection(code: code, english: english)
+        case .invalidRequest(let code):
+            return FirasErrorText.text(code: code, english: english) ?? FirasErrorText.generic(english: english)
+        case .invalidResponse, .decoding:
+            return FirasErrorText.unexpectedResponse(english: english)
+        case .invalidURL, .encoding, .skillValidation:
+            return FirasErrorText.generic(english: english)
         }
-        return error.localizedDescription
     }
 }

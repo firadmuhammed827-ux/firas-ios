@@ -43,11 +43,11 @@
 	<key>NSCameraUsageDescription</key>
 	<string>Firas AI uses the camera only when you choose to add a new photo to your conversation.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Firas AI uses the microphone for voice dictation and live calls you start.</string>
+	<string>Firas AI uses the microphone only during live voice calls that you start.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Firas AI saves generated images and videos to your library only when you ask it to.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Firas AI shows the photos you choose so you can add visual context to a conversation.</string>
+	<string>Firas AI shows your recent photos in Add context so you can attach one quickly. Only the photos you choose are sent with your message.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchScreen</key>
