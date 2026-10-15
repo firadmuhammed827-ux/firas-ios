@@ -76,7 +76,10 @@ final class CodeStore {
     private(set) var buildProgress: ChatJobProgress?
     private(set) var buildStartedAt: Date?
     private(set) var buildingProjectName = ""
+    private(set) var isStoppingBuild = false
     var errorMessage: String?
+    /// A build outcome the screen words from Code.xcstrings in the reader's language.
+    var buildNotice: CodeBuildNotice?
     private(set) var lastResponse: String?
 
     @ObservationIgnored private let api: FirasAPI
@@ -90,8 +93,17 @@ final class CodeStore {
     @ObservationIgnored private var loadGeneration = 0
     @ObservationIgnored private var ownerGeneration = 0
     @ObservationIgnored private var intentHistory: [IntentReference] = []
+    @ObservationIgnored private var awaitingRecovery = false
+    /// The build this device is watching, as last persisted. Stop works from it
+    /// even when the defaults copy cannot be read back.
+    @ObservationIgnored private var buildPointer: CodeBuildPointer?
+    /// The job a Stop was sent for. Its later "cancelled" ending is that Stop
+    /// landing, not a failure.
+    @ObservationIgnored private var stopRequestedJobID: String?
 
     private static let pointerMapKey = "firas.ios.code-builds.v1"
+    private static let maximumRecoveryAttempts = 6
+    private static let unknownJobLimit = 3
 
     init(
         session: SessionStore,
@@ -163,6 +175,10 @@ final class CodeStore {
             let loaded = try await repository.loadAll(ownerID: ownerID)
             guard ticket == loadGeneration, isCurrentOwner(ownerID, generation: generation), !Task.isCancelled else { return }
             projects = loaded
+            // A resumed build can finish while the library is still being read.
+            if let workspace, !projects.contains(where: { $0.id == workspace.id }) {
+                upsert(workspace)
+            }
             if workspace == nil, !isBuilding, let first = projects.first {
                 open(first)
             }
@@ -176,6 +192,11 @@ final class CodeStore {
         synchronizeOwner()
         guard projects.contains(where: { $0.id == project.id }) else { return }
         commitEditorText()
+        // The open file belongs to the project being closed. Forget it before
+        // the switch, or selectFile would commit its text into the next
+        // project's file with the same path.
+        selectedFilePath = nil
+        editorText = ""
         workspace = project
         selectFile(path: preferredEntry(in: project.files))
     }
@@ -195,6 +216,10 @@ final class CodeStore {
             name: cleanName,
             files: Self.blankFiles(projectName: cleanName, language: language)
         )
+        // Same reason as open(_:): a blank project also has an index.html.
+        commitEditorText()
+        selectedFilePath = nil
+        editorText = ""
         workspace = project
         upsert(project)
         selectFile(path: "index.html")
@@ -321,7 +346,10 @@ final class CodeStore {
         buildProgress = nil
         buildStartedAt = pointer.startedAt
         buildingProjectName = pointer.projectName
+        isStoppingBuild = false
+        awaitingRecovery = false
         errorMessage = nil
+        buildNotice = nil
         lastResponse = nil
 
         // Store-owned: leaving the Code screen only removes the viewer. It
@@ -331,6 +359,11 @@ final class CodeStore {
             let context = IntentContext(product: "code", history: self.intentHistory, projectFiles: self.workspace?.files.map(\.path) ?? [])
             let decision = (try? await self.api.classifyIntent(text: cleanPrompt, context: context)) ?? .unavailable
             guard self.isCurrentOwner(ownerID, generation: generation), !Task.isCancelled else { return }
+            // Stopped before admission: nothing was persisted or submitted.
+            if self.isStoppingBuild {
+                self.endBuild(ownerID: ownerID, phase: nil)
+                return
+            }
             var classifiedPointer = pointer
             classifiedPointer.replyOnly = !decision.permitsBrowserBuild
             classifiedPointer.intentInstruction = decision.conversationInstruction
@@ -341,17 +374,22 @@ final class CodeStore {
 
     func resumeIfNeeded() {
         synchronizeOwner()
-        guard owningTask == nil, activeJobID == nil else { return }
+        // A Stop that is still asking the server owns the build until it ends.
+        guard owningTask == nil, activeJobID == nil, !isStoppingBuild else { return }
         guard let ownerID = session.identityID,
               let pointer = persistedPointer(for: ownerID)
         else { return }
 
+        buildPointer = pointer
         isBuilding = true
         activeJobID = pointer.jobID
         buildPhase = .queued
         buildStartedAt = pointer.startedAt
         buildingProjectName = pointer.projectName
+        isStoppingBuild = false
+        awaitingRecovery = false
         errorMessage = nil
+        buildNotice = nil
         let generation = ownerGeneration
         owningTask = Task {
             if pointer.jobID == nil {
@@ -361,6 +399,8 @@ final class CodeStore {
                     let result = (try? await self.api.classifyIntent(text: pointer.prompt,
                         context: IntentContext(product: "code"))) ?? .unavailable
                     guard self.isCurrentOwner(ownerID, generation: generation), !Task.isCancelled else { return }
+                    // A Stop meanwhile is settled by enqueueAndPoll: an older
+                    // launch may already have submitted this cid.
                     prepared.replyOnly = !result.permitsBrowserBuild
                     prepared.intentInstruction = result.conversationInstruction
                     self.persist(prepared)
@@ -381,19 +421,123 @@ final class CodeStore {
         buildStartedAt = nil
         buildingProjectName = ""
         errorMessage = nil
+        buildNotice = nil
+    }
+
+    /// The build card's Stop: the only Code path that cancels a cloud build.
+    /// Leaving the screen or switching accounts never reaches it.
+    func stopBuild() async {
+        synchronizeOwner()
+        guard isBuilding, !isStoppingBuild, let ownerID = session.identityID else { return }
+        isStoppingBuild = true
+        errorMessage = nil
+        buildNotice = nil
+        guard let jobID = activeJobID else {
+            // No job id yet. A watcher still classifying or submitting sees the
+            // stop at its next step. One waiting out a failed admission is idle,
+            // so Stop takes over here: that admission may still have reached the
+            // server, and the cid's receipt says whether a job is running.
+            guard awaitingRecovery else { return }
+            let watcher = owningTask
+            owningTask = nil
+            awaitingRecovery = false
+            watcher?.cancel()
+            guard let pointer = buildPointer else {
+                endBuild(ownerID: ownerID, phase: nil)
+                return
+            }
+            let generation = ownerGeneration
+            let stopped = await stopUnadmitted(pointer, generation: generation)
+            // Unconfirmed: keep recovering the same cid, exactly as before Stop.
+            if !stopped, owningTask == nil, isBuilding, isCurrentOwner(ownerID, generation: generation) {
+                owningTask = Task { await self.enqueueAndPoll(pointer, generation: generation) }
+            }
+            return
+        }
+        // The watcher goes first, so a poll that lands while the cancel is in
+        // flight cannot report the stopped build as failed or apply a project.
+        let watcher = owningTask
+        owningTask = nil
+        watcher?.cancel()
+        await sendStop(ownerID: ownerID, jobID: jobID, generation: ownerGeneration)
+    }
+
+    /// Sends one cancel for an admitted build. Returns false only when the
+    /// server could not be reached: the build may still be running, so it
+    /// stays watched and the reader can press Stop again.
+    @discardableResult
+    private func sendStop(ownerID: String, jobID: String, generation: Int) async -> Bool {
+        stopRequestedJobID = jobID
+        do {
+            _ = try await api.cancelChatJob(id: jobID)
+        } catch {
+            guard isCurrentOwner(ownerID, generation: generation), activeJobID == jobID else { return true }
+            // 404, 409 and 410 all mean the server has no running build under
+            // this id, so there is nothing left to stop.
+            if ![404, 409, 410].contains((error as? APIError)?.statusCode ?? 0) {
+                isStoppingBuild = false
+                buildNotice = .stopUnconfirmed
+                // Restarted from memory, so a pointer the defaults cannot read
+                // back still leaves the build watched.
+                if owningTask == nil, let pointer = buildPointer, pointer.jobID == jobID {
+                    owningTask = Task { await self.poll(pointer, generation: generation) }
+                }
+                return false
+            }
+        }
+        guard isCurrentOwner(ownerID, generation: generation), activeJobID == jobID else { return true }
+        endBuild(ownerID: ownerID, phase: nil)
+        return true
+    }
+
+    /// Stop before this device has a job id. A submission whose answer was lost
+    /// may still have been admitted under the build's cid, so the server's
+    /// read-only receipt decides: a job it names is cancelled like any other,
+    /// and no receipt means nothing is running. Returns false only when the
+    /// server could not answer; the build then goes on as it was.
+    private func stopUnadmitted(_ pointer: CodeBuildPointer, generation: Int) async -> Bool {
+        let receipt: ChatJobReceipt
+        do {
+            let credentials = try await api.mediaCredentialSnapshot()
+            guard isCurrentOwner(pointer.ownerID, generation: generation) else { return true }
+            receipt = try await MediaCredentialScope.$current.withValue(credentials) {
+                try await api.chatJobReceipt(cid: pointer.cid)
+            }
+        } catch {
+            guard isCurrentOwner(pointer.ownerID, generation: generation) else { return true }
+            isStoppingBuild = false
+            buildNotice = .stopUnconfirmed
+            return false
+        }
+        guard isCurrentOwner(pointer.ownerID, generation: generation) else { return true }
+        guard !receipt.jobId.isEmpty, receipt.phase != .unknown else {
+            endBuild(ownerID: pointer.ownerID, phase: nil)
+            return true
+        }
+        persist(pointer.with(jobID: receipt.jobId))
+        activeJobID = receipt.jobId
+        return await sendStop(ownerID: pointer.ownerID, jobID: receipt.jobId, generation: generation)
     }
 
     private func enqueueAndPoll(_ initialPointer: CodeBuildPointer, generation: Int) async {
         guard isCurrentOwner(initialPointer.ownerID, generation: generation) else { return }
 
         var recoveryAttempt = 0
+        var serverRecoveryFailures = 0
         while !Task.isCancelled {
             guard isCurrentOwner(initialPointer.ownerID, generation: generation) else { return }
+            awaitingRecovery = false
+            // Stop before a job id. An earlier attempt, here or in an earlier
+            // launch, may have been admitted under this cid: its receipt decides.
+            if isStoppingBuild, await stopUnadmitted(initialPointer, generation: generation) { return }
             do {
                 if initialPointer.replyOnly != true {
                     _ = try await api.chargeUsage(product: .code, cid: initialPointer.cid)
                     guard isCurrentOwner(initialPointer.ownerID, generation: generation),
                           !Task.isCancelled else { return }
+                    // Nothing is submitted after Stop. Admitting the build only to
+                    // cancel it would bill the job as well, and Stop refunds nothing.
+                    if isStoppingBuild, await stopUnadmitted(initialPointer, generation: generation) { return }
                 }
                 let joinedMessage = initialPointer.prompt + (
                     initialPointer.attachmentContext.isEmpty
@@ -425,6 +569,12 @@ final class CodeStore {
                 let pointer = initialPointer.with(jobID: start.jobId)
                 persist(pointer)
                 activeJobID = start.jobId
+                // Stop was pressed while this job was being admitted; its id
+                // exists only now. If the cancel did not land, keep watching.
+                if isStoppingBuild {
+                    let stopped = await sendStop(ownerID: pointer.ownerID, jobID: start.jobId, generation: generation)
+                    if stopped { return }
+                }
                 if !start.phase.isTerminal {
                     buildPhase = start.phase
                 }
@@ -439,8 +589,17 @@ final class CodeStore {
                 return
             } catch {
                 guard isCurrentOwner(initialPointer.ownerID, generation: generation), !Task.isCancelled else { return }
-
-                errorMessage = message(for: error)
+                if isStoppingBuild {
+                    // A refused submission admitted nothing. One whose answer was
+                    // lost may have been admitted, so its receipt decides.
+                    guard retryable(error) else {
+                        endBuild(ownerID: initialPointer.ownerID, phase: nil)
+                        return
+                    }
+                    if await stopUnadmitted(initialPointer, generation: generation) { return }
+                } else {
+                    errorMessage = message(for: error)
+                }
                 guard retryable(error) else {
                     removePersistedPointer(for: initialPointer.ownerID)
                     isBuilding = false
@@ -452,8 +611,22 @@ final class CodeStore {
                 // Keep one durable build identity across a lost response or
                 // connection. The server and usage ledger deduplicate cid.
                 recoveryAttempt += 1
+                // Bounded: an admission the server keeps refusing would otherwise
+                // hold Build disabled on this launch and every later one. The
+                // reader is told in their language, not with the raw last error.
+                // A transport error does not count: the lost submission may
+                // already be a charged build that this cid recovers once the
+                // network returns, and Stop ends the wait.
+                if !isTransport(error) { serverRecoveryFailures += 1 }
+                guard serverRecoveryFailures <= Self.maximumRecoveryAttempts else {
+                    endBuild(ownerID: initialPointer.ownerID, phase: .failed)
+                    errorMessage = nil
+                    buildNotice = .couldNotQueue
+                    return
+                }
                 isBuilding = true
                 buildPhase = .queued
+                awaitingRecovery = true
                 do {
                     try await Task.sleep(for: recoveryDelay(attempt: recoveryAttempt))
                 } catch {
@@ -486,8 +659,12 @@ final class CodeStore {
 
                 if status.phase == .unknown {
                     unknowns += 1
-                    if unknowns >= 3 {
-                        throw APIError.invalidResponse
+                    // The server answers "unknown" once a job record has expired
+                    // (six hours after the job ends). Asking again cannot bring
+                    // the build back, and the pointer would revive it every launch.
+                    if unknowns >= Self.unknownJobLimit {
+                        finishExpired(pointer)
+                        return
                     }
                 } else {
                     unknowns = 0
@@ -509,6 +686,12 @@ final class CodeStore {
                             )
                             return
                         }
+                    } else if status.error == "cancelled", stopRequestedJobID == jobID {
+                        // A Stop whose answer was lost still landed: the build
+                        // ended as the reader asked, not as a failure.
+                        endBuild(ownerID: pointer.ownerID, phase: nil)
+                        buildNotice = nil
+                        return
                     } else {
                         await finishFailed(pointer, message: status.error ?? "The build did not finish.", generation: generation)
                         return
@@ -516,6 +699,12 @@ final class CodeStore {
                 }
             } catch {
                 guard isCurrentOwner(pointer.ownerID, generation: generation), !Task.isCancelled else { return }
+                // 404 and 410 name a job the server no longer has. A transport
+                // error or a 5xx says nothing about the job: keep watching.
+                if [404, 410].contains((error as? APIError)?.statusCode ?? 0) {
+                    finishExpired(pointer)
+                    return
+                }
                 failures += 1
                 if failures >= 3 { errorMessage = message(for: error) }
             }
@@ -550,6 +739,7 @@ final class CodeStore {
             lastResponse = text
             removePersistedPointer(for: pointer.ownerID)
             isBuilding = false; activeJobID = nil; buildPhase = .completed; buildProgress = nil; owningTask = nil
+            buildNotice = nil
             return
         }
         let decoded = await Task.detached(priority: .userInitiated) {
@@ -564,6 +754,7 @@ final class CodeStore {
                 lastResponse = text
                 removePersistedPointer(for: pointer.ownerID)
                 isBuilding = false; activeJobID = nil; buildPhase = .completed; buildProgress = nil; owningTask = nil
+                buildNotice = nil
             }
             return
         }
@@ -580,6 +771,13 @@ final class CodeStore {
             files: project.files
         )
         rememberIntentResult(prompt: pointer.prompt, response: "Created project \(workspace.name) with files: \(workspace.files.map(\.path).joined(separator: ", "))")
+        // The open file belongs to the project on screen. Commit its edit there
+        // while that project is still current, then forget it: selectFile would
+        // otherwise write it over the new project's file of the same path
+        // (usually index.html) and save the damaged copy.
+        commitEditorText()
+        selectedFilePath = nil
+        editorText = ""
         self.workspace = workspace
         upsert(workspace)
         selectFile(path: preferredEntry(in: workspace.files))
@@ -604,6 +802,8 @@ final class CodeStore {
         buildProgress = nil
         owningTask = nil
         attachments = []
+        // A notice from an unconfirmed Stop described a build that has now ended.
+        buildNotice = nil
     }
 
     private func finishFailed(_ pointer: CodeBuildPointer, message: String, generation: Int) async {
@@ -628,6 +828,27 @@ final class CodeStore {
         buildPhase = .failed
         owningTask = nil
         errorMessage = message
+        buildNotice = nil
+    }
+
+    private func finishExpired(_ pointer: CodeBuildPointer) {
+        endBuild(ownerID: pointer.ownerID, phase: .failed)
+        errorMessage = nil
+        buildNotice = .expired
+    }
+
+    /// Ends this device's part in a build that will deliver nothing more. The
+    /// pointer goes too, so the next launch does not resume it.
+    private func endBuild(ownerID: String, phase: ChatJobPhase?) {
+        removePersistedPointer(for: ownerID)
+        isBuilding = false
+        isStoppingBuild = false
+        awaitingRecovery = false
+        stopRequestedJobID = nil
+        activeJobID = nil
+        buildPhase = phase
+        buildProgress = nil
+        owningTask = nil
     }
 
     private func rememberIntentResult(prompt: String, response: String) {
@@ -643,8 +864,11 @@ final class CodeStore {
             do {
                 return try await api.startChatJob(request)
             } catch {
-                guard attempt < delays.count, retryable(error) else { throw error }
+                // After Stop nothing new is submitted: the caller asks the
+                // server what the last submission did instead.
+                guard attempt < delays.count, retryable(error), !isStoppingBuild else { throw error }
                 try await Task.sleep(for: delays[attempt])
+                if isStoppingBuild { throw error }
             }
         }
         throw APIError.transport(code: -1, message: "The Code build could not be queued.")
@@ -662,6 +886,11 @@ final class CodeStore {
         case .invalidURL, .invalidRequest, .encoding, .skillValidation:
             false
         }
+    }
+
+    private func isTransport(_ error: Error) -> Bool {
+        guard let apiError = error as? APIError, case .transport = apiError else { return false }
+        return true
     }
 
     private func recoveryDelay(attempt: Int) -> Duration {
@@ -756,11 +985,16 @@ final class CodeStore {
 
     private func finishLocalOwnership() {
         isBuilding = false
+        isStoppingBuild = false
+        awaitingRecovery = false
+        buildPointer = nil
+        stopRequestedJobID = nil
         activeJobID = nil
         buildPhase = nil
         buildProgress = nil
         owningTask = nil
         errorMessage = nil
+        buildNotice = nil
     }
 
     private func isCurrentOwner(_ expectedOwnerID: String, generation: Int) -> Bool {
@@ -778,6 +1012,7 @@ final class CodeStore {
     }
 
     private func persist(_ pointer: CodeBuildPointer) {
+        buildPointer = pointer
         var map = pointerMap()
         map[pointer.ownerID] = pointer
         guard let data = try? JSONEncoder().encode(map) else { return }
@@ -785,6 +1020,7 @@ final class CodeStore {
     }
 
     private func removePersistedPointer(for ownerID: String) {
+        buildPointer = nil
         var map = pointerMap()
         map.removeValue(forKey: ownerID)
         if map.isEmpty {

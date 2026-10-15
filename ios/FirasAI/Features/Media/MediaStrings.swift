@@ -52,9 +52,13 @@ enum MediaStrings {
     static let stopping = LocalizedStringResource("media.stopping", table: "Media")
     static let stopped = LocalizedStringResource("media.stopped", table: "Media")
     static let failed = LocalizedStringResource("media.failed", table: "Media")
+    static let failedNotSent = LocalizedStringResource("media.failed.notSent", table: "Media")
+    static let failedNotReceived = LocalizedStringResource("media.failed.notReceived", table: "Media")
+    static let failedExpired = LocalizedStringResource("media.failed.expired", table: "Media")
     static let loadResult = LocalizedStringResource("media.result.load", table: "Media")
     static let loadResultDetail = LocalizedStringResource("media.result.loadDetail", table: "Media")
     static let removeConfirm = LocalizedStringResource("media.remove.confirm", table: "Media")
+    static let removeUnconfirmedConfirm = LocalizedStringResource("media.remove.unconfirmedConfirm", table: "Media")
     static let cancel = LocalizedStringResource("media.cancel", table: "Media")
     static let sourceUsed = LocalizedStringResource("media.source.used", table: "Media")
 

@@ -41,6 +41,9 @@ check(row.includes('ChatTextRenderer.shared.render(text)') && !row.includes('Att
 check(renderer.includes('actor ChatTextRenderer'), 'formatting has independent actor isolation');
 check(renderer.includes('maximumCachedBytes') && renderer.includes('maximumEntries'), 'rich text cache is bounded');
 check(renderer.includes('let id: Int') && !renderer.includes('UUID'), 'text blocks use stable source offsets');
+// Full-syntax parsing turns block structure into presentation intents that Text
+// never draws, so a whole answer collapses into one paragraph.
+check(renderer.includes('.inlineOnlyPreservingWhitespace') && !/interpretedSyntax:\s*\.full\b/.test(renderer), 'answer Markdown parses inline-only and keeps its line breaks, never full syntax');
 check(attachment.includes('CGImageSourceCreateThumbnailAtIndex'), 'camera images are downsampled during decode');
 check(attachment.includes('worker.cancel()'), 'expensive attachment work propagates cancellation');
 check(row.includes('maximumEdge: 360') && row.includes('guard !Task.isCancelled else { return }'), 'thumbnail decode is bounded and prevents stale publication');

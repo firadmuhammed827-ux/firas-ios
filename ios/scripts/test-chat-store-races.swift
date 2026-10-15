@@ -1025,13 +1025,15 @@ import Foundation
             api.delayReceipts = true
             api.failStart(APIError.transport(code: -1005, message: "synthetic lost ACK"))
             try await waitUntil { api.pendingReceipts.count == 1 }
+            let shownBeforeReplacement = store.messages
             session.identityGeneration += 1
             store.synchronizeDraftOwner()
             api.pendingReceipts.removeFirst().resume(returning: ChatJobReceipt(jobId: "old-identity-job", phase: .completed,
                 cid: cid, chatId: "created-1"))
             try await Task.sleep(for: .milliseconds(20))
-            expect(store.lastAcceptedSend == nil && store.messages.isEmpty && api.statusRequests.isEmpty && api.cancelledJobs.isEmpty,
-                   "unsynchronized same-owner identity ABA rejects a delayed original-CID result before publication or control")
+            expect(store.lastAcceptedSend == nil && !shownBeforeReplacement.isEmpty && store.messages == shownBeforeReplacement &&
+                   api.statusRequests.isEmpty && api.cancelledJobs.isEmpty,
+                   "unsynchronized same-owner identity ABA rejects a delayed original-CID result before publication or control, keeping the owner's transcript")
         }
         do {
             let (_, api, store) = fixture()
@@ -1104,10 +1106,12 @@ import Foundation
             api.delayStatuses = true
             api.resolveStart(jobID: "old-epoch-status")
             try await waitUntil { api.pendingStatuses.count == 1 }
+            let shownBeforeReplacement = store.messages
             session.identityGeneration += 1
             api.pendingStatuses.removeFirst().resume(returning: status(.completed, "stale completed private text"))
             try await waitUntil { !store.isSending }
-            expect(store.messages.isEmpty && store.activeJobID == nil && api.cancelledJobs.isEmpty,
+            expect(store.messages == shownBeforeReplacement && !store.messages.contains { $0.content == "stale completed private text" } &&
+                   store.activeJobID == nil && api.cancelledJobs.isEmpty,
                    "unsynchronized identity ABA rejects a late completed result and does not stop its original cloud job")
         }
         do {
@@ -1179,12 +1183,13 @@ import Foundation
             api.resolveStart(jobID: "completion-notification-await")
             try await waitUntil { NotificationCoordinator.shared.pendingFallbacks.count == 1 }
             let readsBeforeReplacement = api.chatRequests.count
+            let shownBeforeReplacement = store.messages
             session.identityGeneration += 1
             NotificationCoordinator.shared.delayFallback = false
             NotificationCoordinator.shared.pendingFallbacks.removeFirst().resume()
             try await waitUntil { !store.isSending }
-            expect(api.chatRequests.count == readsBeforeReplacement && store.messages.isEmpty && api.cancelledJobs.isEmpty,
-                   "identity ABA during terminal notification await rejects canonical history dispatch and stale answer publication")
+            expect(api.chatRequests.count == readsBeforeReplacement && store.messages == shownBeforeReplacement && api.cancelledJobs.isEmpty,
+                   "identity ABA during terminal notification await rejects canonical history dispatch and any later answer publication")
         }
         do {
             let (_, api, store) = fixture()
@@ -1299,6 +1304,268 @@ import Foundation
             await stopping.value
             expect(api.cancelledJobs.count == 4 && api.starts.count == 1 && !store.isSending,
                    "the original known-ID Stop preparation completes alone after an overlapping restore is retired")
+        }
+        // Every session operation starts a new epoch, even a closed Google
+        // sheet, a failed login, a refresh or an export. The same owner keeps
+        // its list and transcript; only in-flight work is fenced and re-read.
+        do {
+            let (session, api, store) = fixture()
+            session.isAuthenticated = false
+            session.identityID = "guest-one"
+            await store.loadConversations()
+            let guestChatID = store.selectedConversationID
+            await store.send(text: "guest greeting", tier: .pro, thinking: false, webSearch: false, language: .english)
+            try await waitUntil { api.pendingStarts.count == 1 }
+            api.resolveStart(jobID: "guest-finished", phase: .completed, text: "guest answer")
+            try await waitUntil { !store.isSending }
+            await store.send(text: "guest follow-up", tier: .pro, thinking: false, webSearch: false, language: .english)
+            try await waitUntil { api.pendingStarts.count == 1 }
+            api.delayStatuses = true
+            api.resolveStart(jobID: "guest-streaming")
+            try await waitUntil { api.pendingStatuses.count == 1 }
+            let transcript = store.messages
+            expect(guestChatID?.hasPrefix("guest-") == true &&
+                   transcript.map(\.content) == ["guest greeting", "guest answer", "guest follow-up", ""],
+                   "the guest holds an unsaved in-memory transcript with one streaming answer")
+            session.isWorking = true
+            session.identityGeneration += 1 // the system Google account picker was closed
+            store.synchronizeDraftOwner()
+            expect(store.selectedConversationID == guestChatID && store.messages == transcript &&
+                   !store.isSending && store.activeJobID == nil,
+                   "a same-guest epoch fences the streaming observer but keeps the unsaved transcript")
+            api.pendingStatuses.removeFirst().resume(returning: status(.processing, "fenced partial"))
+            try await Task.sleep(for: .milliseconds(20))
+            expect(store.messages == transcript, "the fenced guest observer publishes nothing")
+            api.delayStatuses = false
+            api.statusResults = [status(.completed, "guest follow-up answer")]
+            session.isWorking = false
+            await store.reloadAfterSessionOperationIfNeeded()
+            try await waitUntil { !store.isSending && store.activeCID == nil }
+            expect(store.selectedConversationID == guestChatID &&
+                   store.messages.map(\.content) == ["guest greeting", "guest answer", "guest follow-up", "guest follow-up answer"] &&
+                   store.messages.last?.state == .delivered && api.historyReadScopes.isEmpty && api.starts.count == 2,
+                   "ending the operation re-observes the guest's saved job inside the kept transcript without a second admission")
+        }
+        do {
+            let (session, api, store) = fixture()
+            api.listedChats = [summary("owner-one-history")]
+            await store.loadConversations()
+            expect(store.selectedConversationID == "owner-one-history" && store.conversations.count == 1,
+                   "the member has a loaded list and an open conversation")
+            session.isWorking = true
+            session.identityGeneration += 1
+            store.synchronizeDraftOwner()
+            expect(store.conversations.map(\.id) == ["owner-one-history"] && store.selectedConversationID == "owner-one-history",
+                   "the same member's refresh epoch keeps the list and the open conversation")
+            session.identityID = "owner-two"
+            store.synchronizeDraftOwner()
+            expect(store.conversations.isEmpty && store.selectedConversation == nil && store.messages.isEmpty,
+                   "an actual account change still clears the previous owner's list and transcript")
+            session.isWorking = false
+            api.listedChats = [summary("owner-two-history")]
+            await store.loadConversations()
+            await store.reloadAfterSessionOperationIfNeeded()
+            expect(store.conversations.map(\.id) == ["owner-two-history"] && store.selectedConversationID == "owner-two-history" &&
+                   api.historyReadScopes.filter { $0.route == "list" }.count == 2,
+                   "the new account is loaded once by its identity load, not again when the operation ends")
+        }
+        do {
+            let (session, _, store) = fixture()
+            session.isAuthenticated = false
+            session.identityID = "guest-two"
+            await store.loadConversations()
+            let guestChatID = store.selectedConversationID
+            session.isWorking = true
+            session.identityGeneration += 1
+            store.synchronizeDraftOwner()
+            expect(guestChatID != nil && store.selectedConversationID == guestChatID,
+                   "the guest transcript survives the start of a sign-in")
+            session.identityID = "member-after-google"
+            session.isAuthenticated = true
+            store.synchronizeDraftOwner()
+            expect(store.selectedConversation == nil && store.conversations.isEmpty,
+                   "a completed sign-in into another identity never shows the guest transcript under the member")
+            session.isWorking = false
+        }
+        do {
+            let (session, api, store) = fixture()
+            api.listedChats = [summary("running-chat")]
+            await store.loadConversations()
+            let cid = await store.send(text: "long answer", tier: .pro, thinking: false, webSearch: false, language: .english)!
+            try await waitUntil { api.pendingStarts.count == 1 }
+            api.delayStatuses = true
+            api.resolveStart(jobID: "fenced-member-job")
+            try await waitUntil { api.pendingStatuses.count == 1 }
+            session.isWorking = true
+            session.identityGeneration += 1 // pull-to-refresh the account, or export chats
+            store.synchronizeDraftOwner()
+            expect(store.conversations.map(\.id) == ["running-chat"] && store.selectedConversationID == "running-chat" &&
+                   store.messages.last?.cid == cid && !store.isSending && store.activeJobID == nil,
+                   "a same-member settings epoch fences the answer observer but keeps the list and open transcript")
+            api.pendingStatuses.removeFirst().resume(returning: status(.processing, "fenced partial"))
+            try await Task.sleep(for: .milliseconds(20))
+            await store.reloadAfterSessionOperationIfNeeded()
+            expect(!store.messages.contains { $0.content == "fenced partial" } &&
+                   api.historyReadScopes.filter { $0.route == "list" }.count == 1,
+                   "the fenced observer publishes nothing and no reload runs while the operation is still working")
+            session.isWorking = false
+            api.delayStatuses = false
+            let refused = await store.send(text: "before reload", tier: .pro, thinking: false, webSearch: false, language: .english)
+            expect(refused == nil && api.starts.count == 1, "the saved receipt still blocks a second paid send until it is observed again")
+            api.listedChats = [summary("running-chat"), summary("imported-chat")]
+            api.statusResults = [status(.completed, "finished after refresh")]
+            await store.reloadAfterSessionOperationIfNeeded()
+            try await waitUntil { !store.isSending && store.activeCID == nil }
+            expect(store.conversations.map(\.id) == ["running-chat", "imported-chat"] && store.selectedConversationID == "running-chat",
+                   "ending the operation re-reads the list without replacing the open conversation")
+            expect(store.messages.last?.content == "finished after refresh" && store.messages.last?.state == .delivered &&
+                   api.statusRequests.filter { $0 == "fenced-member-job" }.count == 2 && api.starts.count == 1 && api.cancelledJobs.isEmpty,
+                   "the persisted job is re-observed to completion without a second admission or a Stop")
+            let next = await store.send(text: "after refresh", tier: .pro, thinking: false, webSearch: false, language: .english)
+            try await waitUntil { api.pendingStarts.count == 1 }
+            expect(next != nil && api.starts.count == 2, "the re-observed job releases Send instead of refusing it until relaunch")
+            api.resolveStart(jobID: "after-refresh-job", phase: .completed, text: "next answer")
+            try await waitUntil { !store.isSending }
+        }
+        do {
+            let (session, api, store) = fixture()
+            store.updateDraftText(exactDraft, expectedOwnerID: "owner-one", expectedIdentityGeneration: 0)
+            api.delayClassification = true
+            await store.send(text: exactDraft, tier: .pro, thinking: false, webSearch: false, language: .english)
+            try await waitUntil { api.pendingClassifications.count == 1 }
+            session.isWorking = true
+            session.identityGeneration += 1
+            store.synchronizeDraftOwner()
+            api.resolveClassification(.unavailable)
+            try await Task.sleep(for: .milliseconds(20))
+            expect(api.starts.isEmpty && store.messages.last?.role == .assistant && store.messages.last?.state == .failed &&
+                   store.draftText == exactDraft && !store.isSending,
+                   "a kept turn fenced before its sole POST shows as unfinished rather than spinning, and keeps the draft")
+            api.delayClassification = false
+            session.isWorking = false
+        }
+        // The new account's identity load and the operation-end reload are two
+        // tasks with no fixed order. SessionStore applies the new account and
+        // clears isWorking in the same turn, so a reload that runs first finds
+        // nothing to redo, and the identity load reads the new list once.
+        do {
+            let (session, api, store) = fixture()
+            api.listedChats = [summary("owner-one-history")]
+            await store.loadConversations()
+            session.isWorking = true
+            session.identityGeneration += 1
+            store.synchronizeDraftOwner()
+            session.identityID = "owner-two"
+            session.isWorking = false
+            api.listedChats = [summary("owner-two-history")]
+            await store.reloadAfterSessionOperationIfNeeded()
+            expect(store.conversations.isEmpty && store.selectedConversation == nil && store.messages.isEmpty &&
+                   api.historyReadScopes.filter { $0.route == "list" }.count == 1,
+                   "a reload that runs before the new account's identity load reads nothing and shows nothing of the previous owner")
+            await store.loadConversations()
+            await store.reloadAfterSessionOperationIfNeeded()
+            expect(store.conversations.map(\.id) == ["owner-two-history"] && store.selectedConversationID == "owner-two-history" &&
+                   api.historyReadScopes.filter { $0.route == "list" }.count == 2,
+                   "in the reverse order the new account is still loaded exactly once, by its identity load")
+        }
+        // The real Send registers its snapshot as soon as the store returns the
+        // cid. A same-owner epoch before the sole POST must keep that registered
+        // draft, and the unfinished row must carry text: a guest's next request
+        // sends the local transcript as history.
+        do {
+            let (session, api, store) = fixture()
+            session.isAuthenticated = false
+            session.identityID = "guest-fence"
+            await store.loadConversations()
+            store.updateDraftText(exactDraft, expectedOwnerID: "guest-fence", expectedIdentityGeneration: 0)
+            store.updateDraftContext(originalDraftContext, expectedOwnerID: "guest-fence", expectedIdentityGeneration: 0)
+            let snapshot = store.snapshotDraft()!
+            api.delayClassification = true
+            let cid = await store.send(text: exactDraft, tier: .pro, thinking: false, webSearch: false, language: .english)!
+            store.beginDraftSubmission(cid: cid, snapshot: snapshot)
+            try await waitUntil { api.pendingClassifications.count == 1 }
+            session.isWorking = true
+            session.identityGeneration += 1
+            store.synchronizeDraftOwner()
+            let fenced = store.messages.last
+            expect(fenced?.role == .assistant && fenced?.cid == cid && fenced?.state == .failed &&
+                   fenced?.content == "The original answer could not be confirmed. It has not been sent again." &&
+                   !store.isSending && api.starts.isEmpty,
+                   "a registered turn fenced before its sole POST is unfinished with the unconfirmed text, never an empty assistant")
+            api.resolveClassification(.unavailable)
+            try await Task.sleep(for: .milliseconds(20))
+            expect(api.starts.isEmpty && store.messages.last == fenced && store.lastAcceptedSend == nil &&
+                   store.draftText == exactDraft && store.draftContext == originalDraftContext,
+                   "the late classification cannot admit the fenced turn, and the registered draft and attachments stay")
+            api.delayClassification = false
+            session.isWorking = false
+            await store.reloadAfterSessionOperationIfNeeded()
+            expect(store.messages.last == fenced && api.starts.isEmpty, "ending the operation keeps the unfinished row and replays nothing")
+            let retry = await store.send(text: "after the fence", tier: .pro, thinking: false, webSearch: false, language: .english)
+            try await waitUntil { api.pendingStarts.count == 1 }
+            let history = api.starts[0].messages
+            expect(retry != nil && retry != cid &&
+                   history.contains { $0.role == .assistant && $0.cid == cid && $0.content == fenced?.content } &&
+                   !history.contains { $0.role == .assistant && $0.content.isEmpty },
+                   "the next request carries the unfinished turn's text as history and never an empty assistant")
+            api.resolveStart(jobID: "after-fence-job", phase: .completed, text: "answer after the fence")
+            try await waitUntil { !store.isSending }
+        }
+        // Re-observing a saved job after a session operation must not move the
+        // reader out of the conversation they kept open.
+        do {
+            let (session, api, store) = fixture()
+            api.listedChats = [summary("job-chat"), summary("reading-chat")]
+            await store.loadConversations()
+            let cid = await store.send(text: "answer while I read elsewhere", tier: .pro, thinking: false, webSearch: false, language: .english)!
+            try await waitUntil { api.pendingStarts.count == 1 }
+            api.delayStatuses = true
+            api.resolveStart(jobID: "elsewhere-job")
+            try await waitUntil { api.pendingStatuses.count == 1 }
+            await store.select("reading-chat")
+            session.isWorking = true
+            session.identityGeneration += 1
+            store.synchronizeDraftOwner()
+            api.pendingStatuses.removeFirst().resume(returning: status(.processing, "fenced partial"))
+            try await Task.sleep(for: .milliseconds(20))
+            api.delayStatuses = false
+            api.statusResults = [status(.completed, "finished while reading")]
+            session.isWorking = false
+            await store.reloadAfterSessionOperationIfNeeded()
+            try await waitUntil { !store.isSending && store.activeCID == nil }
+            expect(store.selectedConversationID == "reading-chat" && !store.messages.contains { $0.cid == cid },
+                   "re-observing the saved job never moves the reader out of the conversation they kept open")
+            expect(api.statusRequests.filter { $0 == "elsewhere-job" }.count == 2 && api.starts.count == 1 && api.cancelledJobs.isEmpty,
+                   "the job in the other conversation is still observed to completion without a second admission or a Stop")
+        }
+        // Launch runs the same code path and still opens the running chat: the
+        // first conversation a read picks by itself is not one the reader kept.
+        do {
+            let session = SessionStore()
+            let api = FirasAPI()
+            let defaults = UserDefaults(suiteName: "firas-chat-launch-opens-job-" + UUID().uuidString)!
+            let original = ChatStore(session: session, api: api, defaults: defaults, recoveryDelays: [])
+            api.listedChats = [summary("launch-job-chat")]
+            await original.loadConversations()
+            await original.send(text: "still running at launch", tier: .pro, thinking: false, webSearch: false, language: .english)
+            try await waitUntil { api.pendingStarts.count == 1 }
+            api.delayStatuses = true
+            api.resolveStart(jobID: "launch-job")
+            try await waitUntil { api.pendingStatuses.count == 1 }
+            session.identityID = "owner-away"
+            original.synchronizeDraftOwner()
+            api.pendingStatuses.removeFirst().resume(returning: status(.processing))
+            try await Task.sleep(for: .milliseconds(20))
+            session.identityID = "owner-one"
+            api.delayStatuses = false
+            api.statusResults = [status(.completed, "answer found at launch")]
+            api.listedChats = [summary("newer-chat"), summary("launch-job-chat")]
+            let relaunched = ChatStore(session: session, api: api, defaults: defaults, recoveryDelays: [])
+            await relaunched.loadConversations()
+            try await waitUntil { !relaunched.isSending && relaunched.activeCID == nil }
+            expect(relaunched.selectedConversationID == "launch-job-chat" &&
+                   relaunched.messages.contains { $0.content == "answer found at launch" },
+                   "at launch the read's own first pick still gives way to the running chat, as before")
         }
         // Exercise the actual selected-history -> saved-history -> job DTO
         // path. Only the inference suffix is trimmed; full history is retained.

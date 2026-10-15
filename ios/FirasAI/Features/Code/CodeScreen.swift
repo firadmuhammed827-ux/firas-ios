@@ -73,8 +73,15 @@ struct CodeScreen: View {
             .toolbar { toolbarContent }
             .overlay(alignment: .top) {
                 if let error = store.errorMessage, !error.isEmpty {
-                    CodeErrorBanner(message: error) {
+                    CodeErrorBanner(message: Text(verbatim: error)) {
                         store.errorMessage = nil
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.top, 8)
+                    .environment(\.layoutDirection, preferences.language.layoutDirection)
+                } else if let notice = store.buildNotice {
+                    CodeErrorBanner(message: Text(noticeText(notice))) {
+                        store.buildNotice = nil
                     }
                     .padding(.horizontal, 14)
                     .padding(.top, 8)
@@ -83,8 +90,11 @@ struct CodeScreen: View {
             }
         }
         .task(id: session.identityID) {
-            await store.loadProjects()
+            // A persisted build resumes first: loadProjects opens a project only
+            // when nothing is building, so the library and its build card stay
+            // on screen after a relaunch instead of hiding the build.
             store.resumeIfNeeded()
+            await store.loadProjects()
         }
         .sheet(isPresented: $showsOmnixAccess) { OmnixAccessSheet(product: .code, initialDraft: prompt) }
         .fileImporter(
@@ -393,6 +403,14 @@ struct CodeScreen: View {
         preferences.language == .arabic ? "حذف هذا المشروع؟" : "Delete this project?"
     }
 
+    private func noticeText(_ notice: CodeBuildNotice) -> LocalizedStringResource {
+        switch notice {
+        case .expired: CodeStrings.buildExpired
+        case .stopUnconfirmed: CodeStrings.stopUnconfirmed
+        case .couldNotQueue: CodeStrings.buildCouldNotQueue
+        }
+    }
+
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         if showsSidebarButton {
@@ -487,6 +505,7 @@ private struct CodeHeroCard: View {
 private struct CodeBuildProgressCard: View {
     let store: CodeStore
     @Environment(PreferencesStore.self) private var preferences
+    @State private var showsStopConfirmation = false
 
     var body: some View {
         GlassSurface(cornerRadius: 22, tintStrength: 0.055) {
@@ -517,8 +536,32 @@ private struct CodeBuildProgressCard: View {
                         .font(.caption.weight(.medium))
                         .foregroundStyle(preferences.palette.textSecondary)
                 }
+
+                // The only control that cancels the cloud build. Leaving the
+                // screen never does; the store owns the build either way.
+                FirasGlassControlGroup {
+                    Button { showsStopConfirmation = true } label: {
+                        Label(store.isStoppingBuild ? CodeStrings.stopping : CodeStrings.stop,
+                              systemImage: "stop.fill")
+                            .font(.subheadline.weight(.semibold)).frame(minHeight: 44).padding(.horizontal, 12)
+                    }
+                    .modifier(FirasGlassControlStyle())
+                    .disabled(store.isStoppingBuild)
+                }
             }
             .padding(16)
+        }
+        .alert(Text(CodeStrings.stopConfirm), isPresented: $showsStopConfirmation) {
+            Button(role: .destructive) {
+                Task { await store.stopBuild() }
+            } label: {
+                Text(CodeStrings.stop)
+            }
+            Button(role: .cancel) {} label: {
+                Text(CodeStrings.cancel)
+            }
+        } message: {
+            Text(CodeStrings.stopConfirmDetail)
         }
     }
 
@@ -722,7 +765,7 @@ private struct CodePreviewView: UIViewRepresentable {
 }
 
 private struct CodeErrorBanner: View {
-    let message: String
+    let message: Text
     let dismiss: () -> Void
     @Environment(PreferencesStore.self) private var preferences
 
@@ -731,7 +774,7 @@ private struct CodeErrorBanner: View {
             HStack(spacing: 10) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(preferences.palette.error)
-                Text(verbatim: message)
+                message
                     .font(.footnote)
                     .foregroundStyle(preferences.palette.textPrimary)
                     .frame(maxWidth: .infinity, alignment: .leading)

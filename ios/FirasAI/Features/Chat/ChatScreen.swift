@@ -24,12 +24,18 @@ private enum ChatNotice {
     case voiceUnavailable
     case contextProcessing
     case contextPreparationFailed
+    case mediaPendingConfirmation
+    case mediaSignInRequired
+    case mediaBusy
 
     var message: LocalizedStringResource {
         switch self {
         case .voiceUnavailable: ChatStrings.voiceUnavailable
         case .contextProcessing: ChatStrings.contextProcessing
         case .contextPreparationFailed: ChatStrings.contextFileImportFailed
+        case .mediaPendingConfirmation: ChatStrings.mediaPendingConfirmation
+        case .mediaSignInRequired: ChatStrings.mediaSignInRequired
+        case .mediaBusy: ChatStrings.mediaBusy
         }
     }
 
@@ -38,6 +44,9 @@ private enum ChatNotice {
         case .voiceUnavailable: "mic.slash"
         case .contextProcessing: "hourglass"
         case .contextPreparationFailed: "exclamationmark.triangle"
+        case .mediaPendingConfirmation: "clock.arrow.circlepath"
+        case .mediaSignInRequired: "person.crop.circle"
+        case .mediaBusy: "hourglass"
         }
     }
 }
@@ -47,6 +56,14 @@ private struct DirectMediaPreparation {
     let preparationID: UUID
     let identityGeneration: Int
     let ownerGeneration: Int
+}
+
+/// Text typed while a Send is being prepared, with the draft it was typed over.
+private struct PendingDraftEdit {
+    let ownerID: String?
+    let identityGeneration: Int
+    let sent: String
+    let typed: String
 }
 
 struct ChatScreen: View {
@@ -68,6 +85,7 @@ struct ChatScreen: View {
     @State private var presentedSheet: ChatSheet?
     @State private var notice: ChatNotice?
     @State private var isPreparingContext = false
+    @State private var draftTypedWhilePreparing: PendingDraftEdit?
     @State private var contextPreparationTask: Task<Void, Never>?
     @State private var contextPreparationID: UUID?
     @State private var directMediaPreparation: DirectMediaPreparation?
@@ -240,6 +258,9 @@ struct ChatScreen: View {
             retirePreparation()
             dismissDifficultyChoice()
         }
+        .onChange(of: holdsDraftEdits) { _, holding in
+            if !holding { settleDraftTypedWhilePreparing() }
+        }
         .onChange(of: chatStore.selectedConversationID) { _, _ in dismissDifficultyChoice() }
         .onChange(of: chatStore.composerDraft.snapshot()) { _, current in
             if case .difficulty(let request)? = presentedSheet, current != request.scope.draft {
@@ -279,6 +300,13 @@ struct ChatScreen: View {
     private var draft: String { chatStore.draftText }
     private var draftContext: DraftContextSelection { chatStore.draftContext }
 
+    /// From Send until ChatStore holds the job id, the draft IS the request:
+    /// before its one POST the store re-checks the snapshot at every await
+    /// (continueDifficultyPreparation) and fails the turn if it moved.
+    private var holdsDraftEdits: Bool {
+        isPreparingContext || (chatStore.isSending && chatStore.activeJobID == nil)
+    }
+
     private var draftBinding: Binding<String> {
         let ownerID = session.identityID
         let generation = session.identityGeneration
@@ -286,8 +314,52 @@ struct ChatScreen: View {
             guard session.identityID == ownerID, session.identityGeneration == generation else { return "" }
             return chatStore.draftText
         }, set: {
+            // The field stays focused through a Send, so the keyboard stays up;
+            // the request must not change until the store has its job id. What
+            // is typed meanwhile is held and settled when the hold ends.
+            guard !holdsDraftEdits else {
+                draftTypedWhilePreparing = PendingDraftEdit(ownerID: ownerID, identityGeneration: generation,
+                    sent: draftTypedWhilePreparing?.sent ?? chatStore.draftText, typed: $0)
+                return
+            }
+            // A keystroke that lands after the hold ended but before it was
+            // settled joins the held text instead of being overwritten by it.
+            if let pending = draftTypedWhilePreparing {
+                draftTypedWhilePreparing = PendingDraftEdit(ownerID: pending.ownerID,
+                    identityGeneration: pending.identityGeneration, sent: pending.sent, typed: $0)
+                settleDraftTypedWhilePreparing()
+                return
+            }
             chatStore.updateDraftText($0, expectedOwnerID: ownerID, expectedIdentityGeneration: generation)
         })
+    }
+
+    /// Settles keystrokes held during a Send, so the box and the draft agree
+    /// again: an accepted send keeps only what was typed after its text; a
+    /// refused one keeps everything on screen. Another account never receives
+    /// held text; the same account keeps it across a session epoch, as the
+    /// draft itself does.
+    private func settleDraftTypedWhilePreparing() {
+        guard let pending = draftTypedWhilePreparing else { return }
+        draftTypedWhilePreparing = nil
+        guard pending.ownerID == session.identityID else { return }
+        let current = chatStore.draftText
+        let kept: String
+        if current.isEmpty {
+            // Scalars, not Characters: a diacritic typed right after the sent
+            // text's last Arabic letter merges into that letter as a Character.
+            let typed = pending.typed.unicodeScalars
+            let sent = pending.sent.unicodeScalars
+            guard typed.starts(with: sent) else { return }
+            var rest = String.UnicodeScalarView()
+            rest.append(contentsOf: typed.dropFirst(sent.count))
+            kept = String(rest)
+        } else {
+            kept = pending.typed
+        }
+        guard kept != current else { return }
+        chatStore.updateDraftText(kept, expectedOwnerID: session.identityID,
+            expectedIdentityGeneration: session.identityGeneration)
     }
 
     private var draftContextBinding: Binding<DraftContextSelection> {
@@ -696,7 +768,11 @@ struct ChatScreen: View {
             return
         }
         mediaStudioStore.synchronizeOwner()
-        guard mediaStudioStore.canCreate, chatStore.snapshotDraft() == snapshot else { return }
+        guard chatStore.snapshotDraft() == snapshot else { return }
+        guard mediaStudioStore.canCreate else {
+            showMediaRefusal()
+            return
+        }
         let mediaGeneration = mediaStudioStore.ownerGeneration
         guard let binding = await chatStore.prepareMediaTurn(
             prompt: message, tier: tier, modelGeneration: modelGeneration, language: language,
@@ -734,10 +810,23 @@ struct ChatScreen: View {
                 expectedOwnerID: ownerID, expectedOwnerGeneration: mediaGeneration, expectedIdentityGeneration: identityGeneration
             )
         }
-        guard accepted, !Task.isCancelled, contextPreparationID == preparationID,
+        guard accepted else {
+            // A real refusal says why; the text stays in the box. A retired
+            // preparation, owner or epoch, or the reader's own Stop, says nothing.
+            if !Task.isCancelled, contextPreparationID == preparationID,
+               session.identityID == ownerID, session.identityGeneration == identityGeneration,
+               mediaStudioStore.ownerGeneration == mediaGeneration,
+               let reason = mediaStudioStore.errorMessage, !reason.isEmpty {
+                chatStore.errorMessage = reason
+            }
+            return
+        }
+        guard !Task.isCancelled, contextPreparationID == preparationID,
               session.identityID == ownerID, session.identityGeneration == identityGeneration else { return }
         chatStore.consumeAcceptedMediaDraft(binding: binding, snapshot: snapshot)
         notice = nil
+        // Studio opens as a sheet; the keyboard goes away with it.
+        isComposerFocused = false
 
         switch intent {
         case .image:
@@ -746,6 +835,23 @@ struct ChatScreen: View {
             presentedSheet = .media(.video, focusedJobID: nil)
         case .music:
             presentedSheet = .media(.music, focusedJobID: nil)
+        }
+    }
+
+    /// Media could not take a new request. The text stays in the box; only
+    /// the reason is shown, never a silent return.
+    private func showMediaRefusal() {
+        if mediaStudioStore.isUnconfirmedSubmission {
+            withAnimation(noticeAnimation) { notice = .mediaPendingConfirmation }
+        } else if !session.isAuthenticated {
+            withAnimation(noticeAnimation) { notice = .mediaSignInRequired }
+        } else if mediaStudioStore.isCreating {
+            // Another request is being created; an older Studio error is not the reason.
+            withAnimation(noticeAnimation) { notice = .mediaBusy }
+        } else if let reason = mediaStudioStore.errorMessage, !reason.isEmpty {
+            chatStore.errorMessage = reason
+        } else {
+            withAnimation(noticeAnimation) { notice = .mediaBusy }
         }
     }
 

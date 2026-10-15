@@ -35,6 +35,16 @@ final class MediaStudioStore {
     private static let historyLimit = 24
     private static let maximumHistoryBytes = 2_000_000
     private static let maximumActiveReceipts = 256
+    // The server enqueues before it answers the POST, so a request it received
+    // is visible to its CID receipt at once. This long an "unknown" means the
+    // request never arrived; a late job still re-attaches by push notification.
+    private static let unknownReceiptWindow: TimeInterval = 180
+    // URLSession reports these before a request byte reaches the server. Only
+    // they prove a paid POST never left; a timeout or a lost reply proves nothing.
+    private static let unsentTransportCodes: Set<Int> = [
+        URLError.Code.notConnectedToInternet.rawValue, URLError.Code.cannotFindHost.rawValue,
+        URLError.Code.cannotConnectToHost.rawValue, URLError.Code.dnsLookupFailed.rawValue,
+    ]
 
     private struct FreshInput {
         let prompt: String
@@ -63,10 +73,20 @@ final class MediaStudioStore {
     }
 
     var isUnconfirmedSubmission: Bool {
-        creations.contains {
-            $0.phase.isActive && $0.startAttempted == true &&
-                ($0.jobID == nil || $0.errorCode == "media_receipt_mismatch")
-        }
+        creations.contains(where: Self.isUnconfirmed)
+    }
+
+    /// A finished row, or an unconfirmed receipt whose sole POST is no longer
+    /// in flight. Forgetting the latter stops nothing in the cloud: it has no
+    /// job id to address, and a job the server did receive re-attaches by push.
+    func canRemove(_ creation: MediaCreation) -> Bool {
+        guard let current = self.creation(id: creation.id) else { return false }
+        return !current.phase.isActive || (Self.isUnconfirmed(current) && !startingIDs.contains(current.id))
+    }
+
+    private static func isUnconfirmed(_ row: MediaCreation) -> Bool {
+        row.phase.isActive && row.startAttempted == true &&
+            (row.jobID == nil || row.errorCode == "media_receipt_mismatch")
     }
 
     var canCreate: Bool {
@@ -255,10 +275,14 @@ final class MediaStudioStore {
         beginWork(for: current.id, language: language)
     }
 
+    /// The screen confirms first. An unconfirmed active row only stops being
+    /// watched here; its caller, if still waiting, is told it was not accepted.
     func remove(_ creation: MediaCreation) {
         guard creation.ownerID == session.identityID, creation.ownerID == loadedOwnerID,
-              let current = self.creation(id: creation.id), !current.phase.isActive else { return }
+              let current = self.creation(id: creation.id), canRemove(current) else { return }
         retireWork(creation.id)
+        freshInputs[creation.id] = nil
+        resolveAcceptance(creation.id, accepted: false)
         creations.removeAll { $0.id == creation.id }
         persistCurrentHistory()
         if hasReadableLocalAsset(current), let url = current.localFileURL {
@@ -579,6 +603,10 @@ final class MediaStudioStore {
             startingIDs.remove(creationID)
             if definitiveRejection(error) {
                 await fail(creationID, error: error, language: language, ticket: ticket)
+            } else if neverSent(error) {
+                // Nothing reached the server: no receipt can appear and nothing
+                // was charged. The caller keeps the draft for an explicit resend.
+                await fail(creationID, code: "media_not_sent", language: language, ticket: ticket)
             } else {
                 update(creationID) { $0.errorCode = "receipt_pending" }
                 _ = persistCurrentHistory()
@@ -601,6 +629,8 @@ final class MediaStudioStore {
                             }
                             return
                         }
+                        // An unknown receipt past its window has just failed the row.
+                        if current.phase.isTerminal { return }
                     } catch is CancellationError { return }
                     catch { /* A read failure never grants another paid POST. */ }
                 }
@@ -697,6 +727,10 @@ final class MediaStudioStore {
                 return
             } catch {
                 guard accepts(ticket, ownerID: current.ownerID) else { return }
+                if knownJobID != nil, isExpired(error, kind: current.kind) {
+                    await fail(creationID, code: "media_expired", language: language, ticket: ticket)
+                    return
+                }
                 transportFailures += 1
                 if error as? APIError == .invalidResponse {
                     update(creationID) { $0.errorCode = "media_receipt_mismatch" }
@@ -728,6 +762,7 @@ final class MediaStudioStore {
               status.chatId == nil || (!status.chatId!.isEmpty && status.chatId!.utf16.count <= 128)
         else { throw APIError.invalidResponse }
         let returnedID = status.jobId.flatMap { $0.isEmpty ? nil : $0 }
+        let answeredAt = Date()
         if status.phase == "unknown" {
             guard returnedID == nil, status.key == nil else { throw APIError.invalidResponse }
         } else {
@@ -748,10 +783,22 @@ final class MediaStudioStore {
             if let returnedID { $0.jobID = returnedID }
             if let key = status.key { $0.resultKey = key }
             $0.errorCode = nil
-            if status.phase == "unknown" { $0.errorCode = "receipt_pending" }
+            if status.phase == "unknown" {
+                $0.errorCode = "receipt_pending"
+                // Counts from the first unknown answer and survives relaunch.
+                // A clock moved backwards restarts the window, never extends it.
+                if ($0.receiptUnknownSince ?? .distantFuture) > answeredAt { $0.receiptUnknownSince = answeredAt }
+            } else {
+                $0.receiptUnknownSince = nil
+            }
             $0.phase = $0.stopRequested == true ? .stopping : returnedID == nil ? .queued : .running
         }
         _ = persistCurrentHistory()
+        if status.phase == "unknown", let since = creation(id: creationID)?.receiptUnknownSince,
+           answeredAt.timeIntervalSince(since) >= Self.unknownReceiptWindow {
+            await fail(creationID, code: "media_not_received", language: language, ticket: ticket)
+            return
+        }
         if status.phase == "done", let key = status.key {
             await finish(creationID, key: key, language: language, ticket: ticket)
         } else if status.phase == "fail" {
@@ -789,7 +836,15 @@ final class MediaStudioStore {
                 }
                 if creation(id: creationID)?.phase.isTerminal == true { return }
             } catch is CancellationError { return }
-            catch { /* A failed status read does not erase an acknowledged Stop. */ }
+            catch {
+                // A failed status read does not erase an acknowledged Stop. An
+                // unacknowledged Stop of a job the server no longer has ends here.
+                if !acknowledged, isExpired(error, kind: current.kind) {
+                    guard accepts(ticket, ownerID: current.ownerID) else { return }
+                    await fail(creationID, code: "media_expired", language: language, ticket: ticket)
+                    return
+                }
+            }
             guard accepts(ticket, ownerID: current.ownerID) else { return }
             if acknowledged {
                 update(creationID) { $0.phase = .stopped; $0.errorCode = nil }
@@ -1005,7 +1060,8 @@ final class MediaStudioStore {
             phase: row.phase, jobID: row.jobID, resultKey: row.resultKey,
             localFileURL: row.localFileURL, errorCode: row.errorCode,
             cid: row.cid, chatID: row.chatID, tier: row.tier, languageCode: row.languageCode,
-            startAttempted: row.startAttempted, stopRequested: row.stopRequested, sourceWasProvided: row.sourceWasProvided)
+            startAttempted: row.startAttempted, stopRequested: row.stopRequested, sourceWasProvided: row.sourceWasProvided,
+            receiptUnknownSince: row.receiptUnknownSince)
     }
 
     private static func validCID(_ value: String) -> Bool {
@@ -1057,6 +1113,18 @@ final class MediaStudioStore {
         }
     }
 
+    private func neverSent(_ error: Error) -> Bool {
+        guard let apiError = error as? APIError, case .transport(let code, _) = apiError else { return false }
+        return Self.unsentTransportCodes.contains(code)
+    }
+
+    /// Only the server's own not-found for this exact job id is definitive. A
+    /// proxy or gateway 404 carries another code and stays a transient read.
+    private func isExpired(_ error: Error, kind: MediaStudioKind) -> Bool {
+        guard let apiError = error as? APIError, case .httpStatus(let status, let code) = apiError else { return false }
+        return status == 404 && code == kind.rawValue + "_not_found"
+    }
+
     private func localizedFailure(_ code: String, language: AppLanguage) -> String {
         let key = code.lowercased()
         if key == "stop_unconfirmed" {
@@ -1074,6 +1142,20 @@ final class MediaStudioStore {
         if key == "media_input_invalid" {
             return language == .arabic ? "راجع طول الوصف والمدة قبل الإنشاء."
                 : "Check the brief length and duration before creating."
+        }
+        if key == "media_not_sent" {
+            return language == .arabic
+                ? "تعذّر الوصول إلى الخادم، فلم يُرسل الطلب ولم يُحتسب من رصيدك. أعد المحاولة عند عودة الاتصال."
+                : "The server could not be reached, so the request was not sent and nothing was charged. Try again when connected."
+        }
+        if key == "media_not_received" {
+            return language == .arabic
+                ? "لم يستلم الخادم هذا الطلب، فلم يُنشأ شيء. يمكنك إرسال طلب جديد."
+                : "The server never received this request, so nothing was created. You can send a new request."
+        }
+        if key == "media_expired" {
+            return language == .arabic ? "لم تعد هذه المهمة متاحة على الخادم."
+                : "This job is no longer available on the server."
         }
         if key.contains("submission_uncertain") || key == "media_receipt_mismatch" {
             return language == .arabic

@@ -83,8 +83,19 @@ struct FirasAppShell: View {
             mediaStudioStore.resumeIfNeeded()
             promptEngineerStore.synchronizeOwner()
             promptEngineerStore.resumeIfNeeded()
+            // The identity task above never reruns for the same account, so
+            // Chat re-reads its list and re-observes a fenced answer here.
+            Task { await chatStore.reloadAfterSessionOperationIfNeeded() }
         }
-        .onChange(of: session.identityGeneration) { _, _ in promptEngineerStore.synchronizeOwner() }
+        .onChange(of: session.identityGeneration) { _, _ in
+            promptEngineerStore.synchronizeOwner()
+            // An operation that starts and ends within one main-actor turn
+            // never shows isWorking changing, but its epoch still fenced Chat.
+            // The store's pending-reload flag keeps both hooks to one load.
+            if loadsRemoteData, !session.isWorking {
+                Task { await chatStore.reloadAfterSessionOperationIfNeeded() }
+            }
+        }
     }
 
     private var regularLayout: some View {

@@ -305,6 +305,7 @@ struct MediaStudioScreen: View {
                 MediaCreationCard(creation: creation,
                     isLoadingAsset: store.loadingAssetIDs.contains(creation.id),
                     localAssetURL: store.localAssetURL(for: creation),
+                    canRemove: store.canRemove(creation),
                     playbackLease: playbackLease,
                     stop: { store.stop(creation, language: preferences.language) },
                     load: { store.loadAsset(creation, language: preferences.language) },
@@ -731,6 +732,7 @@ private struct MediaCreationCard: View {
     let creation: MediaCreation
     let isLoadingAsset: Bool
     let localAssetURL: URL?
+    let canRemove: Bool
     let playbackLease: MediaPlaybackLease
     let stop: () -> Void
     let load: () -> Void
@@ -761,7 +763,9 @@ private struct MediaCreationCard: View {
         .padding(16)
         .background(preferences.palette.surface.opacity(0.65), in: .rect(cornerRadius: 25))
         .overlay { RoundedRectangle(cornerRadius: 25).stroke(preferences.palette.border) }
-        .confirmationDialog(Text(MediaStrings.removeConfirm), isPresented: $showsRemoveConfirmation, titleVisibility: .visible) {
+        // An active row offered here is an unconfirmed receipt, never a confirmed render.
+        .confirmationDialog(Text(creation.phase.isActive ? MediaStrings.removeUnconfirmedConfirm : MediaStrings.removeConfirm),
+                            isPresented: $showsRemoveConfirmation, titleVisibility: .visible) {
             Button(role: .destructive, action: remove) { Text(MediaStrings.remove) }
             Button(role: .cancel, action: {}) { Text(MediaStrings.cancel) }
         }
@@ -790,7 +794,7 @@ private struct MediaCreationCard: View {
                 }
             }
             Spacer(minLength: 4)
-            if !creation.phase.isActive {
+            if canRemove {
                 Menu {
                     Button(role: .destructive) { showsRemoveConfirmation = true } label: {
                         Label(MediaStrings.remove, systemImage: "trash")
@@ -845,6 +849,19 @@ private struct MediaCreationCard: View {
             Label(MediaStrings.failed, systemImage: "exclamationmark.triangle")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(preferences.palette.error)
+            if let failureDetail {
+                Text(failureDetail).font(.caption).foregroundStyle(preferences.palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var failureDetail: LocalizedStringResource? {
+        switch creation.errorCode ?? "" {
+        case "media_not_sent": return MediaStrings.failedNotSent
+        case "media_not_received": return MediaStrings.failedNotReceived
+        case "media_expired": return MediaStrings.failedExpired
+        default: return nil
         }
     }
 

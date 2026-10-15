@@ -156,6 +156,120 @@ import Foundation
             await dispose(resumedSession, resumedAPI, resumedStore)
         }
 
+        // A POST URLSession proves never left (no route, DNS or connection)
+        // fails at once: no receipt wait, nothing charged, Create free again.
+        do {
+            let (session, api, store, _) = try fixture()
+            let ticket = store.ownerGeneration
+            let attempt = Task { await store.createImage(prompt: "offline", preset: .square,
+                language: .english, binding: binding(), tier: .pro, expectedOwnerID: "owner-a", expectedOwnerGeneration: ticket) }
+            try await waitUntil { api.pendingStarts.count == 1 }
+            expect(!store.canRemove(store.creations[0]), "the in-flight sole POST cannot be forgotten")
+            api.pendingStarts.removeFirst().resume(throwing: APIError.transport(code: -1009, message: "offline"))
+            let accepted = await attempt.value
+            expect(!accepted && store.creations[0].phase == .failed && store.creations[0].errorCode == "media_not_sent",
+                "a request that never left the device fails at once")
+            expect(api.receipts.isEmpty && !store.isUnconfirmedSubmission && store.canCreate,
+                "a never-sent request waits on no receipt and leaves Create enabled")
+            expect(store.errorMessage?.contains("nothing was charged") == true, "the person is told nothing was sent or charged")
+            let next = Task { await store.createImage(prompt: "online again", preset: .square, language: .english,
+                binding: binding("media-turn-new"), tier: .pro, expectedOwnerID: "owner-a", expectedOwnerGeneration: ticket) }
+            try await waitUntil { api.pendingStarts.count == 1 }
+            api.pendingStarts.removeFirst().resume(returning: try startResponse(cid: "media-turn-new", overrideKey: newImageKey))
+            let nextAccepted = await next.value
+            expect(nextAccepted && api.starts.count == 2, "an explicit resend is admitted as a new request")
+            await dispose(session, api, store)
+        }
+
+        // An unknown receipt starts a bounded wait at its first answer.
+        // Transient read failures inside it keep polling; past it the row
+        // fails, across a relaunch, without a replay, and Create is enabled.
+        do {
+            let (session, api, store, defaults) = try fixture()
+            let ticket = store.ownerGeneration
+            let attempt = Task { await store.createImage(prompt: "lost body", preset: .square,
+                language: .english, binding: binding(), tier: .pro, expectedOwnerID: "owner-a", expectedOwnerGeneration: ticket) }
+            try await waitUntil { api.pendingStarts.count == 1 }
+            api.pendingStarts.removeFirst().resume(throwing: APIError.transport(code: -1001, message: "timed_out"))
+            for _ in 0..<3 {
+                try await waitUntil { api.pendingReceipts.count == 1 }
+                api.pendingReceipts.removeFirst().resume(returning: try status(phase: "unknown", chatID: nil))
+            }
+            let accepted = await attempt.value
+            let firstUnknown = store.creations[0].receiptUnknownSince
+            expect(!accepted && firstUnknown != nil && store.creations[0].phase == .queued,
+                "the first unknown answer starts the bounded wait without failing the row")
+            let failures: [APIError] = [.transport(code: -1009, message: "offline"), .httpStatus(code: 503, message: "busy")]
+            for failure in failures {
+                try await waitUntil { api.pendingReceipts.count == 1 }
+                api.pendingReceipts.removeFirst().resume(throwing: failure)
+            }
+            try await waitUntil { api.pendingReceipts.count == 1 }
+            expect(store.creations[0].phase == .queued && store.isUnconfirmedSubmission && api.receipts.count == 6,
+                "transient read failures never fail an unconfirmed job and polling continues")
+            api.pendingReceipts.removeFirst().resume(returning: try status(phase: "unknown", chatID: nil))
+            try await waitUntil { api.pendingReceipts.count == 1 }
+            expect(store.creations[0].receiptUnknownSince == firstUnknown && store.creations[0].phase == .queued,
+                "later unknown answers inside the window keep counting from the first")
+            var pointer = try JSONDecoder().decode([String: [MediaCreation]].self,
+                from: defaults.data(forKey: "firas.ios.media-studio.history.v1")!)["owner-a"]!
+            expect(abs(pointer[0].receiptUnknownSince!.timeIntervalSince(firstUnknown!)) < 0.001, "the start of the wait is durable")
+            await dispose(session, api, store)
+            pointer[0].receiptUnknownSince = firstUnknown!.addingTimeInterval(-181)
+            let (resumedSession, resumedAPI, resumedStore, _) = try fixture(history: pointer)
+            resumedStore.resumeIfNeeded()
+            expect(!resumedStore.canCreate, "a restored unconfirmed receipt still holds Create until it resolves")
+            try await waitUntil { resumedAPI.pendingReceipts.count == 1 }
+            resumedAPI.pendingReceipts.removeFirst().resume(returning: try status(phase: "unknown", chatID: nil))
+            try await waitUntil { resumedStore.creations[0].phase == .failed }
+            expect(resumedStore.creations[0].errorCode == "media_not_received" && resumedAPI.starts.isEmpty,
+                "unknown past the window fails the row without replaying the paid POST")
+            expect(!resumedStore.isUnconfirmedSubmission && resumedStore.canCreate, "Create is enabled again once nothing is in flight")
+            try await Task.sleep(for: .milliseconds(1_700))
+            expect(resumedAPI.receipts.count == 1, "a failed receipt is no longer polled")
+            await dispose(resumedSession, resumedAPI, resumedStore)
+        }
+
+        // A known job ends only on the server's own not-found for its exact
+        // kind; a proxy 404 with another code stays transient and is polled.
+        do {
+            let row = MediaCreation(ownerID: "owner-a", kind: .video, prompt: "",
+                phase: .running, jobID: videoKey, cid: "media-turn-a", chatID: "chat-a", startAttempted: true)
+            let (session, api, store, _) = try fixture(history: [row])
+            store.resumeIfNeeded()
+            try await waitUntil { api.pendingStatuses.count == 1 }
+            expect(!store.canRemove(store.creations[0]), "a confirmed rendering job cannot be removed")
+            api.pendingStatuses.removeFirst().resume(throwing: APIError.httpStatus(code: 404, message: "media_request_failed"))
+            try await waitUntil { api.pendingStatuses.count == 1 }
+            expect(store.creations[0].phase == .running, "an unrecognised 404 is a transient read, not a verdict")
+            api.pendingStatuses.removeFirst().resume(throwing: APIError.httpStatus(code: 404, message: "video_not_found"))
+            try await waitUntil { store.creations[0].phase == .failed }
+            expect(store.creations[0].errorCode == "media_expired" && store.canRemove(store.creations[0]) &&
+                api.starts.isEmpty && api.stops.isEmpty, "the server's not-found for the exact job ends the row at once")
+            await dispose(session, api, store)
+        }
+
+        // A stuck unconfirmed row can be forgotten after the screen confirms.
+        // Only its local watcher retires; nothing is stopped or re-sent, and a
+        // late receipt answer cannot resurrect it.
+        do {
+            let row = MediaCreation(ownerID: "owner-a", kind: .music, prompt: "",
+                phase: .queued, errorCode: "receipt_pending", cid: "media-turn-a", chatID: "chat-a", startAttempted: true)
+            let (session, api, store, defaults) = try fixture(history: [row])
+            store.resumeIfNeeded()
+            try await waitUntil { api.pendingReceipts.count == 1 }
+            expect(!store.canCreate && store.canRemove(store.creations[0]), "an unconfirmed receipt blocks Create but may be removed")
+            store.remove(store.creations[0])
+            expect(store.creations.isEmpty && store.canCreate, "removing the stuck receipt re-enables Create")
+            api.pendingReceipts.removeFirst().resume(returning: try status(.music, phase: "unknown", chatID: nil))
+            await Task.yield(); await Task.yield()
+            let saved = try JSONDecoder().decode([String: [MediaCreation]].self,
+                from: defaults.data(forKey: "firas.ios.media-studio.history.v1")!)["owner-a"]!
+            expect(store.creations.isEmpty && saved.isEmpty && api.receipts.count == 1 && api.stops.isEmpty && api.starts.isEmpty,
+                "a retired watcher cannot resurrect, Stop or replay the removed receipt")
+            await dispose(session, api, store)
+        }
+
         // Neither an older unbound row nor a bound pre-dispatch saved draft has
         // the fresh in-memory permit needed to cross the paid POST boundary.
         for hasBinding in [false, true] {

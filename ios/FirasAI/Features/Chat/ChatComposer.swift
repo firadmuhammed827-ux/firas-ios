@@ -23,27 +23,50 @@ struct ChatComposer: View {
 
     @Environment(PreferencesStore.self) private var preferences
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var controlSpace
+
+    /// At rest the composer is one capsule row: +, the field, the primary
+    /// action. Focus, a draft or a pinned skill opens it into the full card
+    /// with the model button underneath.
+    private var isExpanded: Bool {
+        isFocused || !draft.isEmpty || !selectedSkills.isEmpty || promptEngineerRecognized
+    }
 
     var body: some View {
         // The field stays on a quiet material surface; only its controls are
-        // glass, so one glass layer never has to sample another.
-        GlassSurface(cornerRadius: 25, tintStrength: 0.045, usesLiquidGlass: false) {
-            VStack(spacing: 4) {
-                if !selectedSkills.isEmpty {
-                    selectedSkillRow
+        // glass, so one glass layer never has to sample another. The radius is
+        // the 22pt control radius plus the 8pt inset, so corners stay concentric.
+        GlassSurface(cornerRadius: 30, tintStrength: 0.045, usesLiquidGlass: false) {
+            FirasGlassControlGroup(spacing: 8) {
+                VStack(spacing: 4) {
+                    if isExpanded && !selectedSkills.isEmpty {
+                        selectedSkillRow
+                    }
+                    // messageField keeps one position in this row in both states,
+                    // so expanding never replaces the field or drops the keyboard.
+                    HStack(spacing: 4) {
+                        if !isExpanded {
+                            contextButton
+                                .matchedGeometryEffect(id: ComposerSlot.context, in: controlSpace)
+                        }
+                        messageField
+                        if !isExpanded {
+                            primaryAction
+                                .animation(primaryActionAnimation, value: primaryActionState)
+                                .matchedGeometryEffect(id: ComposerSlot.primary, in: controlSpace)
+                        }
+                    }
+                    if isExpanded {
+                        actionRow
+                    }
                 }
-                messageField
-                FirasGlassControlGroup(spacing: 8) {
-                    actionRow
-                }
+                .padding(8)
             }
-            .padding(.horizontal, 8)
-            .padding(.top, 8)
-            .padding(.bottom, 7)
             .frame(maxWidth: 760)
         }
         .frame(maxWidth: 760)
         .frame(maxWidth: .infinity)
+        .animation(expansionAnimation, value: isExpanded)
     }
 
     private var messageField: some View {
@@ -56,7 +79,9 @@ struct ChatComposer: View {
             .padding(.vertical, 5)
             .frame(minHeight: 44)
             .focused($isFocused)
-            .disabled(isPreparing)
+            // Never disabled: a disabled field resigns focus, which closes the
+            // keyboard and folds the card after every Send. The screen's draft
+            // binding refuses edits while a Send is being prepared instead.
             .submitLabel(preferences.sendOnReturn ? .send : .return)
             .onSubmit {
                 guard preferences.sendOnReturn, canSend, !isSending, !promptEngineerRecognized, !promptEngineerBusy else { return }
@@ -71,10 +96,12 @@ struct ChatComposer: View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 8) {
                 contextButton
+                    .matchedGeometryEffect(id: ComposerSlot.context, in: controlSpace)
                 modelButton
                 Spacer(minLength: 8)
                 primaryAction
                     .animation(primaryActionAnimation, value: primaryActionState)
+                    .matchedGeometryEffect(id: ComposerSlot.primary, in: controlSpace)
             }
 
             VStack(spacing: 8) {
@@ -220,6 +247,17 @@ struct ChatComposer: View {
         guard preferences.motionEnabled, !reduceMotion else { return nil }
         return .spring(duration: 0.28, bounce: 0.16)
     }
+
+    private var expansionAnimation: Animation? {
+        guard preferences.motionEnabled, !reduceMotion else { return nil }
+        return .spring(duration: 0.32, bounce: 0.1)
+    }
+}
+
+/// The two controls that move between the resting row and the open card.
+private enum ComposerSlot: Hashable {
+    case context
+    case primary
 }
 
 private enum ComposerPrimaryAction: Hashable {

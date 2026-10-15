@@ -71,6 +71,7 @@ final class ChatStore {
     @ObservationIgnored private var pollTask: Task<Void, Never>?
     @ObservationIgnored private var loadedOwnerID: String?
     @ObservationIgnored private var loadedIdentityGeneration: Int?
+    @ObservationIgnored private var reloadsAfterSessionOperation = false
     @ObservationIgnored private var activeIdentityGeneration: Int?
     @ObservationIgnored private var loadGeneration = 0
     @ObservationIgnored private var selectionGeneration = 0
@@ -279,6 +280,12 @@ final class ChatStore {
 
     func loadConversations() async {
         adoptCurrentOwnerIfNeeded()
+        // A read begun after a session operation satisfies its pending reload.
+        if !session.isWorking { reloadsAfterSessionOperation = false }
+        // A conversation already open when the read begins (one the same owner
+        // kept through a session operation) stays open. Only a read that opens
+        // the first conversation itself, as at launch, may show the job's chat.
+        let keepingOpenConversation = selectedConversation != nil
         loadGeneration &+= 1
         let generation = loadGeneration
         let selectionAtLoad = selectionGeneration
@@ -325,7 +332,16 @@ final class ChatStore {
         }
 
         guard confirmLoad(generation, ownerID: ownerID) else { return }
-        await resumeActiveJob()
+        await resumeActiveJob(keepingOpenConversation: keepingOpenConversation)
+    }
+
+    /// Called when a session operation ends. Its epoch fenced the list read
+    /// and any answer observer but kept the same account's transcript, so
+    /// re-read the list, which ends by re-observing a saved in-flight answer.
+    func reloadAfterSessionOperationIfNeeded() async {
+        adoptCurrentOwnerIfNeeded()
+        guard reloadsAfterSessionOperation, !session.isWorking, session.identityID != nil else { return }
+        await loadConversations()
     }
 
     func select(_ id: String) async {
@@ -861,7 +877,9 @@ final class ChatStore {
         }
     }
 
-    func resumeActiveJob() async {
+    /// `keepingOpenConversation` comes from a list read that found the reader
+    /// already in a conversation: the job's chat may then replace only itself.
+    func resumeActiveJob(keepingOpenConversation: Bool = false) async {
         adoptCurrentOwnerIfNeeded()
         guard pollTask == nil, resumePreparationID == nil, cancellationPreparationID == nil else { return }
         guard let record = persistedJob() else { return }
@@ -882,7 +900,8 @@ final class ChatStore {
             let preparedRecord = recordWithCurrentStopIntent(record)
             await MediaCredentialScope.$current.withValue(credentials) {
                 await resumeRecord(preparedRecord, preparationID: preparationID,
-                                   selectionAtResume: selectionAtResume, identityGeneration: identityGeneration)
+                                   selectionAtResume: selectionAtResume, identityGeneration: identityGeneration,
+                                   keepingOpenConversation: keepingOpenConversation)
             }
         } catch {
             guard ownsActiveOperation(ownerID: ownerID, cid: record.cid, identityGeneration: identityGeneration),
@@ -892,16 +911,20 @@ final class ChatStore {
     }
 
     private func resumeRecord(_ initialRecord: ActiveChatJobRecord, preparationID: UUID,
-                              selectionAtResume: Int, identityGeneration: Int) async {
+                              selectionAtResume: Int, identityGeneration: Int,
+                              keepingOpenConversation: Bool) async {
         var record = initialRecord
         guard cancellationPreparationID == nil else { return }
+        // Re-observing never moves the reader out of a conversation they kept
+        // open; the job still runs and finishes in its own chat.
         if session.isAuthenticated, let serverChatID = record.serverChatID {
             do {
                 let canonical = try await api.chat(id: serverChatID)
                 guard ownsActiveOperation(ownerID: record.ownerID, cid: record.cid, identityGeneration: identityGeneration),
                       resumePreparationID == preparationID else { return }
                 record.messages = mergedMessages(server: canonical.messages, fallback: record.messages, cid: record.cid)
-                if selectionGeneration == selectionAtResume {
+                if selectionGeneration == selectionAtResume, !keepingOpenConversation || selectedConversation == nil ||
+                    selectedConversation?.id == record.localConversationID {
                     selectedConversation = ChatConversation(id: canonical.id, title: canonical.title, messages: record.messages)
                 }
             } catch {
@@ -909,7 +932,8 @@ final class ChatStore {
                       resumePreparationID == preparationID else { return }
                 errorMessage = message(for: error)
             }
-        } else if selectionGeneration == selectionAtResume {
+        } else if selectionGeneration == selectionAtResume, !keepingOpenConversation || selectedConversation == nil ||
+                    selectedConversation?.id == record.localConversationID {
             selectedConversation = ChatConversation(id: record.localConversationID, title: record.title, messages: record.messages)
         }
         guard ownsActiveOperation(ownerID: record.ownerID, cid: record.cid, identityGeneration: identityGeneration),
@@ -1647,12 +1671,33 @@ final class ChatStore {
     /// visible in another account (or in guest mode). Cancelling this local
     /// watcher does not call the server cancellation endpoint; the durable job
     /// continues and, for members, still saves into its original chat.
+    /// Every session operation (a closed sign-in sheet, a refresh, an export)
+    /// starts a new epoch even when the account stays. The same owner keeps
+    /// its list and open transcript, including a guest's unsaved one; only
+    /// in-flight work is fenced, and is re-read once the operation ends.
     private func adoptCurrentOwnerIfNeeded() {
         let ownerID = session.identityID
         composerDraft.bind(ownerID: ownerID, identityGeneration: session.identityGeneration)
         guard loadedOwnerID != ownerID || loadedIdentityGeneration != session.identityGeneration else { return }
+        let sameOwner = loadedIdentityGeneration != nil && loadedOwnerID == ownerID
 
         retireDifficultySelection()
+
+        // A kept turn whose sole POST never ran has no saved receipt, so no
+        // resume can observe it. Show it unfinished rather than still running;
+        // its editable draft was never consumed. Like every other failure it
+        // carries text, so later history never sends the model an empty turn.
+        if sameOwner, let cid = activeCID, persistedJob()?.cid != cid,
+           var conversation = selectedConversation,
+           let index = conversation.messages.firstIndex(where: {
+               $0.cid == cid && $0.role == .assistant && $0.state == .sending
+           }) {
+            conversation.messages[index].state = .failed
+            if conversation.messages[index].content.isEmpty {
+                conversation.messages[index].content = unconfirmedMessage(languageCode: conversation.messages[index].lang)
+            }
+            selectedConversation = conversation
+        }
 
         pollTask?.cancel()
         pollTask = nil
@@ -1664,8 +1709,10 @@ final class ChatStore {
         selectionGeneration &+= 1
         pendingSelectionID = nil
         isLoading = false
-        conversations = []
-        selectedConversation = nil
+        if !sameOwner {
+            conversations = []
+            selectedConversation = nil
+        }
         activeJobID = nil
         activeCID = nil
         activeIdentityGeneration = nil
@@ -1674,6 +1721,9 @@ final class ChatStore {
         lastAcceptedSend = nil
         unavailableReceiptCID = nil
         isSending = false
+        // A load that this adoption fenced, or that an operation's own guards
+        // will refuse, is redone by reloadAfterSessionOperationIfNeeded.
+        reloadsAfterSessionOperation = sameOwner || session.isWorking
         loadedOwnerID = ownerID
         loadedIdentityGeneration = session.identityGeneration
     }

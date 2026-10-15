@@ -45,6 +45,17 @@ nonisolated struct CodeProject: Codable, Equatable, Sendable {
     }
 }
 
+/// A build ending the store records and the Code screen words in the reader's
+/// language from Code.xcstrings.
+nonisolated enum CodeBuildNotice: Equatable, Sendable {
+    /// The server no longer knows the job: its record expired or was removed.
+    case expired
+    /// Stop could not reach the server; the build may still be running.
+    case stopUnconfirmed
+    /// The server kept refusing to admit the build, so this device let it go.
+    case couldNotQueue
+}
+
 nonisolated enum CodeProjectDecodingError: Error, Equatable, Sendable {
     case missingFence
     case invalidUTF8

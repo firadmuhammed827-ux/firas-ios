@@ -345,22 +345,7 @@ private struct ChatFormattedText: View {
         VStack(alignment: .leading, spacing: 7) {
             if let rendered, rendered.source == text || (!rendered.source.isEmpty && text.hasPrefix(rendered.source)) {
                 ForEach(rendered.segments) { segment in
-                    switch segment.kind {
-                    case .markdown(let value, let attributed):
-                        if let attributed {
-                            Text(attributed)
-                                .font(style.font)
-                                .foregroundStyle(style.color)
-                                .fixedSize(horizontal: false, vertical: true)
-                        } else {
-                            Text(value)
-                                .font(style.font)
-                                .foregroundStyle(style.color)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    case .math(let value, let inline):
-                        ChatMathBlock(value: value, inline: inline)
-                    }
+                    ChatTextBlockView(segment: segment, style: style)
                 }
             } else {
                 // Show a new value immediately until its first rich snapshot
@@ -372,12 +357,66 @@ private struct ChatFormattedText: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .textSelection(.enabled)
+        // Copy takes the source, so steps, code and formulas paste intact
+        // rather than as the text of whichever block was pressed. Share is kept
+        // from the text-selection menu this replaced, under the system's label.
+        .contextMenu {
+            Button {
+                UIPasteboard.general.string = text
+            } label: {
+                Label {
+                    Text(ChatStrings.copy)
+                } icon: {
+                    Image(systemName: "doc.on.doc")
+                }
+            }
+            ShareLink(item: text)
+        } preview: {
+            // A long answer lifted whole would be screens tall; the preview
+            // shows its opening, while Copy and Share still take all of it.
+            Text(verbatim: previewText)
+                .font(style.font)
+                .foregroundStyle(Color(uiColor: .label))
+                .multilineTextAlignment(.leading)
+                .lineLimit(12)
+                .padding(16)
+                .frame(maxWidth: 340, alignment: .leading)
+                .background(Color(uiColor: .systemBackground))
+                .environment(\.layoutDirection, previewIsRightToLeft ? .rightToLeft : .leftToRight)
+        }
         .task(id: text) {
             guard let segments = try? await ChatTextRenderer.shared.render(text),
                   !Task.isCancelled else { return }
             rendered = RenderedText(source: text, segments: segments)
         }
+    }
+
+    /// The answer's opening, found without counting the whole (still growing)
+    /// answer on every render. Right-to-left text starts with a right-to-left
+    /// mark so a Latin first word does not flip the paragraph.
+    private var previewText: String {
+        let opening: String
+        if let end = text.index(text.startIndex, offsetBy: 420, limitedBy: text.endIndex), end < text.endIndex {
+            opening = String(text[..<end]) + "…"
+        } else {
+            opening = text
+        }
+        return previewIsRightToLeft ? "\u{200F}" + opening : opening
+    }
+
+    /// The preview reads right to left when Arabic letters at least match the
+    /// other letters in the answer's opening.
+    private var previewIsRightToLeft: Bool {
+        var arabic = 0
+        var other = 0
+        for scalar in text.unicodeScalars.prefix(600) {
+            if (0x0600...0x06FF).contains(scalar.value) {
+                arabic += 1
+            } else if scalar.properties.isAlphabetic {
+                other += 1
+            }
+        }
+        return arabic > 0 && arabic >= other
     }
 
     private struct RenderedText {
@@ -388,21 +427,188 @@ private struct ChatFormattedText: View {
     struct Style {
         let font: Font
         let color: Color
+        /// Answers lay every block across the column so the block's own
+        /// direction aligns it; a user bubble keeps hugging its text.
+        let fillsWidth: Bool
+        /// Levels 1 and 2; deeper headings are the body font, semibold.
+        let titleFont: Font
+
+        func headingFont(_ level: Int) -> Font {
+            level <= 2 ? titleFont : font.weight(.semibold)
+        }
 
         static func message(color: Color) -> Style {
-            Style(font: .body, color: color)
+            Style(font: .body, color: color, fillsWidth: false, titleFont: .title3.weight(.semibold))
         }
 
         static func assistant(color: Color) -> Style {
-            Style(font: .body, color: color)
+            Style(font: .body, color: color, fillsWidth: true, titleFont: .title3.weight(.semibold))
         }
 
         static func reasoning(color: Color) -> Style {
-            Style(font: .subheadline, color: color)
+            Style(font: .subheadline, color: color, fillsWidth: true, titleFont: .subheadline.weight(.semibold))
         }
 
         static func system(color: Color) -> Style {
-            Style(font: .caption, color: color)
+            Style(font: .caption, color: color, fillsWidth: true, titleFont: .caption.weight(.semibold))
+        }
+    }
+}
+
+/// One Markdown block. Text draws no block structure, so headings, list
+/// markers, quotes, code and tables are laid out here around inline Text.
+private struct ChatTextBlockView: View {
+    let segment: ChatTextSegment
+    let style: ChatFormattedText.Style
+
+    @Environment(PreferencesStore.self) private var preferences
+    @Environment(\.layoutDirection) private var readerDirection
+
+    var body: some View {
+        content
+            .frame(maxWidth: style.fillsWidth ? CGFloat.infinity : nil, alignment: .leading)
+            .environment(\.layoutDirection, direction)
+    }
+
+    private var direction: LayoutDirection {
+        guard let rightToLeft = segment.rightToLeft else { return readerDirection }
+        return rightToLeft ? .rightToLeft : .leftToRight
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch segment.kind {
+        case .paragraph(let pieces):
+            ChatTextPieces(pieces: pieces, font: style.font, color: style.color)
+        case .heading(let level, let pieces):
+            ChatTextPieces(pieces: pieces, font: style.headingFont(level), color: style.color)
+                .accessibilityAddTraits(.isHeader)
+        case .listItem(let marker, let depth, let pieces):
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                ZStack(alignment: .trailing) {
+                    // Every marker column is two digits wide, so the text of
+                    // "9.", "10.", a bullet and a later paragraph of the same
+                    // item all start on one line.
+                    Text(verbatim: "00.")
+                        .hidden()
+                        .accessibilityHidden(true)
+                    // The marker is its own left-to-right run, as on the website,
+                    // so "1." keeps its period after the digit in Arabic too.
+                    Text(verbatim: "\u{200E}" + marker)
+                }
+                .font(style.font.monospacedDigit())
+                .foregroundStyle(style.color)
+                .frame(minWidth: 20, alignment: .trailing)
+                .accessibilityHidden(marker.isEmpty)
+                ChatTextPieces(pieces: pieces, font: style.font, color: style.color)
+            }
+            .padding(.leading, CGFloat(min(depth, 4)) * 20)
+        case .quote(let pieces):
+            ChatTextPieces(pieces: pieces, font: style.font, color: style.color)
+                .padding(.leading, 12)
+                .overlay(alignment: .leading) {
+                    Capsule()
+                        .fill(preferences.palette.border)
+                        .frame(width: 3)
+                }
+        case .code(let language, let code):
+            ChatCodeBlock(language: language, code: code, color: style.color)
+        case .table(let rows):
+            ChatTableBlock(rows: rows, font: style.font, headerFont: style.headingFont(3), color: style.color)
+        case .rule:
+            Rectangle()
+                .fill(preferences.palette.border)
+                .frame(height: 1)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+        }
+    }
+}
+
+private struct ChatTextPieces: View {
+    let pieces: [ChatTextPiece]
+    let font: Font
+    let color: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            ForEach(pieces) { piece in
+                switch piece.kind {
+                case .markdown(_, let attributed):
+                    Text(attributed)
+                        .font(font)
+                        .foregroundStyle(color)
+                        .fixedSize(horizontal: false, vertical: true)
+                case .math(let value, let inline):
+                    ChatMathBlock(value: value, inline: inline)
+                }
+            }
+        }
+    }
+}
+
+/// Fenced code keeps its own lines: monospaced, never reflowed, scrolled
+/// sideways, and read left to right inside an Arabic answer.
+private struct ChatCodeBlock: View {
+    let language: String
+    let code: String
+    let color: Color
+
+    @Environment(PreferencesStore.self) private var preferences
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !language.isEmpty {
+                Text(verbatim: language)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(preferences.palette.textMuted)
+            }
+            ScrollView(.horizontal) {
+                Text(verbatim: code)
+                    .font(.system(.footnote, design: .monospaced))
+                    .foregroundStyle(color)
+                    .fixedSize()
+                    .padding(.bottom, 2)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            preferences.palette.surfaceSunken.opacity(0.55),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(preferences.palette.border, lineWidth: 1)
+        }
+        .environment(\.layoutDirection, .leftToRight)
+    }
+}
+
+/// Pipe tables keep one line per row and one column per cell; a wide table
+/// scrolls sideways instead of wrapping every word.
+private struct ChatTableBlock: View {
+    let rows: [ChatTableRow]
+    let font: Font
+    let headerFont: Font
+    let color: Color
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 7) {
+                ForEach(rows) { row in
+                    GridRow {
+                        ForEach(row.cells.indices, id: \.self) { index in
+                            Text(row.cells[index])
+                                .font(row.isHeader ? headerFont : font)
+                                .foregroundStyle(color)
+                                .fixedSize()
+                        }
+                    }
+                }
+            }
+            .padding(.bottom, 2)
         }
     }
 }

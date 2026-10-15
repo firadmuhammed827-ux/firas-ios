@@ -897,6 +897,54 @@
         }
       }
     },
+    "notice.media.pendingConfirmation": {
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "طلب وسائط سابق ما زال بانتظار التأكيد. نصّك ما زال في مربع الكتابة؛ حاول مجدداً بعد قليل، أو أزِل الطلب المعلّق من الاستوديو."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "An earlier media request is still being confirmed. Your text is still in the box; try again shortly, or remove the pending request in Studio."
+          }
+        }
+      }
+    },
+    "notice.media.signInRequired": {
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "سجّل الدخول لإنشاء الصور والفيديو والموسيقى. نصّك ما زال في مربع الكتابة."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sign in to create images, videos and music. Your text is still in the box."
+          }
+        }
+      }
+    },
+    "notice.media.busy": {
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "إنشاء الوسائط مشغول الآن. نصّك ما زال في مربع الكتابة؛ حاول مجدداً بعد قليل."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Media creation is busy right now. Your text is still in the box; try again shortly."
+          }
+        }
+      }
+    },
     "voice.audioRouteFailed": {
       "localizations": {
         "ar": {

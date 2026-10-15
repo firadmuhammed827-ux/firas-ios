@@ -865,6 +865,54 @@
         }
       }
     },
+    "media.failed.notSent": {
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "لم يُرسل هذا الطلب، ولم يُحتسب من رصيدك."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This request was not sent, and nothing was charged."
+          }
+        }
+      }
+    },
+    "media.failed.notReceived": {
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "لم يستلم الخادم هذا الطلب، فلم يُنشأ شيء."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The server never received this request, so nothing was created."
+          }
+        }
+      }
+    },
+    "media.failed.expired": {
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "لم تعد هذه المهمة متاحة على الخادم."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This job is no longer available on the server."
+          }
+        }
+      }
+    },
     "media.result.load": {
       "localizations": {
         "ar": {
@@ -909,6 +957,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Remove this result from this device?"
+          }
+        }
+      }
+    },
+    "media.remove.unconfirmedConfirm": {
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "إزالة هذا الطلب غير المؤكد من الجهاز؟ إن كان الخادم قد استلمه فقد يكتمل في السحابة."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove this unconfirmed request from this device? If the server received it, it can still finish in the cloud."
           }
         }
       }

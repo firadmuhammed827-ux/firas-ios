@@ -226,11 +226,63 @@ requireFragments("Stores/BrainStore.swift", [
   "documentID = response.id",
 ]);
 
+// The body of the first declaration starting with `signature`, braces matched.
+function declarationBody(value, signature, file) {
+  const start = value.indexOf(signature);
+  if (start < 0) fail(`${file} is missing ${signature}`);
+  const open = value.indexOf("{", start);
+  let depth = 0;
+  for (let index = open; index < value.length; index += 1) {
+    if (value[index] === "{") depth += 1;
+    else if (value[index] === "}" && --depth === 0) return { start, end: index + 1, body: value.slice(open, index + 1) };
+  }
+  fail(`${file} has an unterminated ${signature}`);
+}
+
+function occurrences(value, fragment) {
+  const found = [];
+  for (let index = value.indexOf(fragment); index >= 0; index = value.indexOf(fragment, index + 1)) found.push(index);
+  return found;
+}
+
 for (const store of ["Stores/CodeStore.swift"]) {
   const value = source(store);
-  for (const forbidden of ["cancelChatJob", "onDisappear", "owningTask?.cancel()"] ) {
+  for (const forbidden of ["onDisappear", "owningTask?.cancel()"] ) {
     if (value.includes(forbidden)) fail(`${store} contains forbidden lifecycle cancellation: ${forbidden}`);
   }
+  // A build is cancelled only by the reader's own Stop. The single cancel lives
+  // in sendStop, reached only from stopBuild and from stopUnadmitted, and the
+  // stopping flag that lets the watcher call stopUnadmitted is set only by
+  // stopBuild. Leaving the screen or the app can therefore never cancel.
+  const stopBuild = declarationBody(value, "func stopBuild()", store);
+  const sendStop = declarationBody(value, "private func sendStop(", store);
+  const stopUnadmitted = declarationBody(value, "private func stopUnadmitted(", store);
+  const enqueueAndPoll = declarationBody(value, "private func enqueueAndPoll(", store);
+  const inside = (index, ...declarations) => declarations.some((d) => index >= d.start && index < d.end);
+  const cancels = occurrences(value, "cancelChatJob");
+  if (cancels.length !== 1 || !inside(cancels[0], sendStop)) {
+    fail(`${store} must cancel exactly once, inside sendStop (found ${cancels.length})`);
+  }
+  // The watcher may finish a Stop the reader already pressed (the job id or
+  // the receipt arrives only after the press), never start one of its own.
+  const guardedByStop = (index) => {
+    const before = value.slice(Math.max(0, index - 420), index);
+    return before.includes("if isStoppingBuild");
+  };
+  for (const [call, allowed] of [["await sendStop(", [stopBuild, stopUnadmitted]], ["await stopUnadmitted(", [stopBuild]]]) {
+    for (const index of occurrences(value, call)) {
+      const ok = inside(index, ...allowed) || (inside(index, enqueueAndPoll) && guardedByStop(index));
+      if (!ok) fail(`${store} calls ${call.slice(6, -1)} outside the explicit Stop path`);
+    }
+  }
+  for (const index of occurrences(value, "isStoppingBuild = true")) {
+    if (!inside(index, stopBuild)) fail(`${store} sets isStoppingBuild outside stopBuild`);
+  }
 }
+const codeScreen = source("Features/Code/CodeScreen.swift");
+if (codeScreen.includes("onDisappear") && /onDisappear[\s\S]{0,200}stopBuild/.test(codeScreen)) {
+  fail("Features/Code/CodeScreen.swift stops a build when the screen disappears");
+}
+if (!codeScreen.includes("stopBuild()")) fail("Features/Code/CodeScreen.swift has no explicit Stop control");
 
 console.log(`CLEAN: ${swiftFiles.length} Swift files, 2 product catalogs, durable products and Agent retirement (source checks only)`);

@@ -156,6 +156,9 @@ nonisolated struct MediaCreation: Codable, Equatable, Identifiable, Sendable {
     var startAttempted: Bool?
     var stopRequested: Bool?
     var sourceWasProvided: Bool?
+    // First time the server answered this CID receipt "unknown"; any known
+    // answer clears it. Persisted so the bounded wait survives a relaunch.
+    var receiptUnknownSince: Date?
 
     var canRetry: Bool {
         // A receipt is not a replayable draft. A fresh render requires an
@@ -184,7 +187,8 @@ nonisolated struct MediaCreation: Codable, Equatable, Identifiable, Sendable {
         languageCode: String? = nil,
         startAttempted: Bool? = nil,
         stopRequested: Bool? = nil,
-        sourceWasProvided: Bool? = nil
+        sourceWasProvided: Bool? = nil,
+        receiptUnknownSince: Date? = nil
     ) {
         self.id = id
         self.ownerID = ownerID
@@ -207,6 +211,7 @@ nonisolated struct MediaCreation: Codable, Equatable, Identifiable, Sendable {
         self.startAttempted = startAttempted
         self.stopRequested = stopRequested
         self.sourceWasProvided = sourceWasProvided
+        self.receiptUnknownSince = receiptUnknownSince
     }
 }
 
